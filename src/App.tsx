@@ -753,10 +753,7 @@ function formatChecklist() {
                 <button
                   type="button"
                   title="Link"
-                  onClick={() => {
-                    console.log("LINK CLICK");
-                    alert("LINK CLICK");
-                  }}
+                  onClick={formatLink}
                 >
                   ↗
                 </button>
