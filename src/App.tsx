@@ -16,6 +16,12 @@ function App() {
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Notes");
+  const [pendingLink, setPendingLink] = useState<{
+    start: number;
+    end: number;
+    text: string;
+    url: string;
+  } | null>(null);
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
@@ -106,8 +112,6 @@ function App() {
   }
 
   function formatLink() {
-    alert("FORMAT LINK CLICKED");
-
     const textarea = editorRef.current;
 
     if (!textarea || !selectedNote) return;
@@ -119,28 +123,37 @@ function App() {
 
     if (selectedText.length === 0) return;
 
-    const url = window.prompt("Enter URL:");
+    setPendingLink({ start, end, text: selectedText, url: "" });
+  }
+
+  function applyLink() {
+    const textarea = editorRef.current;
+
+    if (!textarea || !selectedNote || !pendingLink) return;
+
+    const url = pendingLink.url.trim();
 
     if (!url) return;
 
-    const newText = `[${selectedText}](${url})`;
+    const newText = `[${pendingLink.text}](${url})`;
 
     const updatedContent =
-      selectedNote.content.slice(0, start) +
+      selectedNote.content.slice(0, pendingLink.start) +
       newText +
-      selectedNote.content.slice(end);
+      selectedNote.content.slice(pendingLink.end);
 
-      updateNoteField("content", updatedContent);
+    updateNoteField("content", updatedContent);
+    setPendingLink(null);
 
     requestAnimationFrame(() => {
       textarea.focus();
 
       textarea.setSelectionRange(
-      start + 1,
-      start + 1 + selectedText.length,
-    );
-  });
-}
+        pendingLink.start + 1,
+        pendingLink.start + 1 + pendingLink.text.length,
+      );
+    });
+  }
 
   function formatHeading() {
     const textarea = editorRef.current;
@@ -753,7 +766,10 @@ function formatChecklist() {
                 <button
                   type="button"
                   title="Link"
-                  onClick={formatLink}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    formatLink();
+                  }}
                 >
                   ↗
                 </button>
@@ -769,6 +785,37 @@ function formatChecklist() {
                   &lt;/&gt;
                 </button>
               </div>
+
+              {pendingLink && (
+                <form
+                  className="link-editor"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    applyLink();
+                  }}
+                >
+                  <span>URL</span>
+                  <input
+                    autoFocus
+                    type="url"
+                    placeholder="https://example.com"
+                    value={pendingLink.url}
+                    onChange={(event) =>
+                      setPendingLink({
+                        ...pendingLink,
+                        url: event.target.value,
+                      })
+                    }
+                  />
+                  <button type="submit">Apply</button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingLink(null)}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )}
 
               <textarea
                 ref={editorRef}
