@@ -143,6 +143,11 @@ function App() {
       selectedNote.content.slice(pendingLink.end);
 
     updateNoteField("content", updatedContent);
+    saveNote({
+      ...selectedNote,
+      content: updatedContent,
+    });
+    
     setPendingLink(null);
 
     requestAnimationFrame(() => {
