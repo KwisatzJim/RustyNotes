@@ -214,6 +214,13 @@ Native dialog reference: [Tauri Dialog](https://v2.tauri.app/plugin/dialog/).
 
 ## Selected-note sync status
 
+- Layout regression: with Vite running, open `/tests/layout-check.html` in a
+  browser. This isolated fixture renders the real React UI with 434 synthetic
+  notes and a mocked status response; it cannot read or write the native database.
+  At 1100×720 and 800×500 the entire editor footer must remain in the viewport,
+  and the note list must scroll internally. Native Tauri verification is still
+  required for the real database status response.
+
 - The editor footer reports **Local only**, **Local changes**, **Matches last
   server snapshot**, **Conflict saved**, or **Upload recovery needed**. Hover
   for an explanation and the associated server/account when one exists.

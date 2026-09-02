@@ -98,6 +98,8 @@ button {
   min-height: 0;
   flex: 1;
   display: grid;
+  /* Constrain the row to the window; long note lists must scroll internally. */
+  grid-template-rows: minmax(0, 1fr);
   grid-template-columns: clamp(160px, 20vw, 220px) clamp(200px, 25vw, 300px) minmax(0, 1fr);
 }
 
@@ -245,6 +247,7 @@ button {
 
 .note-list {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: #fbfbfc;
@@ -374,6 +377,7 @@ button {
 
 .editor {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: white;
