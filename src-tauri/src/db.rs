@@ -31,13 +31,14 @@ pub fn open_database() -> Result<Connection> {
     }
 
     let connection = Connection::open(path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
 
     initialize_database(&connection)?;
 
     Ok(connection)
 }
 
-fn initialize_database(connection: &Connection) -> Result<()> {
+pub(crate) fn initialize_database(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS notes (
@@ -47,6 +48,37 @@ fn initialize_database(connection: &Connection) -> Result<()> {
             category    TEXT NOT NULL DEFAULT 'Personal',
             favorite    INTEGER NOT NULL DEFAULT 0,
             modified_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS refresh_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            local_id INTEGER NOT NULL,
+            base_snapshot TEXT NOT NULL,
+            local_snapshot TEXT NOT NULL,
+            server_snapshot TEXT NOT NULL,
+            local_key TEXT NOT NULL,
+            server_key TEXT NOT NULL,
+            UNIQUE(local_id, local_key, server_key)
+        );
+        CREATE TABLE IF NOT EXISTS conflict_resolutions (
+            conflict_id INTEGER PRIMARY KEY,
+            action TEXT NOT NULL,
+            copy_id INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS imported_notes (
+            server TEXT NOT NULL,
+            account TEXT NOT NULL,
+            remote_id INTEGER NOT NULL,
+            local_id INTEGER NOT NULL UNIQUE,
+            original_snapshot TEXT NOT NULL,
+            PRIMARY KEY (server, account, remote_id)
+        );
+        CREATE TABLE IF NOT EXISTS note_creation_attempts (
+            local_id INTEGER PRIMARY KEY,
+            server TEXT NOT NULL,
+            account TEXT NOT NULL,
+            local_snapshot TEXT NOT NULL,
+            server_snapshot TEXT,
+            completed INTEGER NOT NULL DEFAULT 0
         );
         "#,
     )?;

@@ -14,7 +14,7 @@
 
 body {
   margin: 0;
-  min-width: 900px;
+  min-width: 0;
   height: 100vh;
   overflow: hidden;
 }
@@ -39,7 +39,9 @@ button {
 /* Top bar */
 
 .topbar {
-  height: 58px;
+  min-height: 58px;
+  flex-wrap: wrap;
+  gap: 8px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -71,6 +73,7 @@ button {
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
@@ -95,13 +98,16 @@ button {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-columns: 220px 300px minmax(0, 1fr);
+  grid-template-columns: clamp(160px, 20vw, 220px) clamp(200px, 25vw, 300px) minmax(0, 1fr);
 }
 
 /* Sidebar */
 
 .sidebar {
   position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 16px 10px;
@@ -408,6 +414,7 @@ button {
 
 .editor-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 3px;
 }
 
@@ -431,15 +438,18 @@ button {
 }
 
 .formatting-toolbar {
-  height: 42px;
-  padding: 0 20px;
+  min-height: 42px;
+  flex-shrink: 0;
+  padding: 6px 20px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   border-bottom: 1px solid #ededee;
 }
 
 .formatting-toolbar button {
+  flex-shrink: 0;
   width: 30px;
   height: 28px;
   border-radius: 5px;
@@ -455,6 +465,7 @@ button {
 }
 
 .toolbar-divider {
+  flex-shrink: 0;
   width: 1px;
   height: 18px;
   margin: 0 7px;
@@ -463,6 +474,8 @@ button {
 
 .link-editor {
   min-height: 42px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
   padding: 6px 20px;
   display: flex;
   align-items: center;
@@ -526,8 +539,10 @@ button {
 }
 
 .editor-footer {
-  height: 32px;
-  padding: 0 20px;
+  min-height: 32px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: 6px 20px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -560,3 +575,32 @@ button {
 .empty-editor p {
   font-size: 12px;
 }
+
+.settings-dialog {
+  width: min(480px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid #dedee1;
+  border-radius: 12px;
+  color: #202124;
+  background: white;
+}
+
+.settings-dialog::backdrop { background: rgb(0 0 0 / 30%); }
+.settings-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.settings-dialog p { font-size: 13px; line-height: 1.5; color: #606066; }
+.settings-dialog label { display: block; margin: 20px 0 8px; font-size: 13px; }
+.settings-dialog input { width: 100%; padding: 10px; border: 1px solid #999; border-radius: 5px; }
+.settings-dialog [role="alert"] { color: #a12222; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.settings-actions button { padding: 9px 14px; border-radius: 5px; cursor: pointer; }
+.settings-actions button[type="submit"] { background: #252525; color: white; }
+.settings-actions button:disabled { opacity: 0.5; cursor: default; }
+.connect-button { width: 100%; margin-top: 10px; padding: 10px 14px; border-radius: 5px; background: #252525; color: white; cursor: pointer; }
+.connect-button:disabled { opacity: 0.5; cursor: default; }
+.conflict-dialog { width: min(960px, calc(100vw - 40px)); }
+.conflict-dialog select { width: 100%; padding: 8px; }
+.conflict-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+.conflict-columns section { min-width: 0; overflow-wrap: anywhere; }
+.conflict-columns pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #f7f7f8; }

@@ -1,7 +1,6 @@
-# Tauri + React + Typescript
+# RustyNotes is a notes app that syncs with Nextcloud.
+I got frustrated with existing apps that either didn't fit my use case or had a lot of features I didn't need nor want.
+So I made my own.
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+### this is soooo alpha at this point.
 
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

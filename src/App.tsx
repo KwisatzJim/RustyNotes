@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import { acknowledgeSave, createSaveQueue } from "./saveQueue";
+import { Settings } from "./Settings";
+import { Conflicts } from "./Conflicts";
+import { Upload } from "./Upload";
+import { Refresh } from "./Refresh";
+import { Export } from "./Export";
+import { ImportMarkdown } from "./ImportMarkdown";
+import type { ConflictSummary, RefreshSummary, ResolutionChoice } from "./syncTypes";
 
 interface Note {
   id: number;
@@ -12,11 +20,25 @@ interface Note {
 }
 
 function App() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [refreshOpen, setRefreshOpen] = useState(false);
+  const [conflictsOpen, setConflictsOpen] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<{ id: number; title: string } | null>(null);
+  const [exportTarget, setExportTarget] = useState<{ id: number; title: string } | null>(null);
+  const [importMarkdownOpen, setImportMarkdownOpen] = useState(false);
+  const [conflicts, setConflicts] = useState<ConflictSummary[]>([]);
+  const [reloadRequired, setReloadRequired] = useState(false);
+  const failedSaves = useRef(new Set<number>());
+  const enqueueSave = useMemo(() => createSaveQueue(), []);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingSaves, setPendingSaves] = useState(0);
   const [notes, setNotes] = useState<Note[]>([]);
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Notes");
+  const [deleteConfirmation, setDeleteConfirmation] = useState<number | null>(null);
   const [pendingLink, setPendingLink] = useState<{
+    noteId: number;
     start: number;
     end: number;
     text: string;
@@ -26,7 +48,13 @@ function App() {
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    setPendingLink(null);
+    setDeleteConfirmation(null);
+  }, [selectedNoteId]);
+
+  useEffect(() => {
     loadNotes();
+    void invoke<ConflictSummary[]>("list_refresh_conflicts").then(setConflicts).catch(() => undefined);
   }, []);
 
   async function loadNotes() {
@@ -40,6 +68,105 @@ function App() {
     } catch (error) {
       console.error("Failed to load notes:", error);
     }
+  }
+
+  async function refreshImportedNotes() {
+    const storedNotes = await invoke<Note[]>("get_notes");
+    // Refresh only newly imported rows: do not overwrite edits or pending saves.
+    setNotes((current) => {
+      const existing = new Set(current.map((note) => note.id));
+      return [...storedNotes.filter((note) => !existing.has(note.id)), ...current];
+    });
+    setSelectedNoteId((current) => current ?? storedNotes[0]?.id ?? null);
+    setSearch("");
+    setSelectedCategory("All Notes");
+  }
+
+  async function refreshFromServer(): Promise<RefreshSummary> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) {
+        throw "Close this dialog and retry failed saves or reload local notes before refreshing.";
+      }
+      setPendingLink(null);
+      try {
+        const summary = await invoke<RefreshSummary>("refresh_server_notes");
+        const storedNotes = await invoke<Note[]>("get_notes");
+        // Both refresh entry points are modal and the save queue is held, so no edits can race
+        // with this replacement. All pending saves finished before refresh.
+        setNotes(storedNotes);
+        setSelectedNoteId((current) => current ?? storedNotes[0]?.id ?? null);
+        setSearch("");
+        setSelectedCategory("All Notes");
+        setConflicts(await invoke<ConflictSummary[]>("list_refresh_conflicts"));
+        return summary;
+      } catch (error) {
+        // A transport error can obscure whether the database commit succeeded.
+        // Reload before permitting edits, or fail closed to avoid stale saves.
+        try { setNotes(await invoke<Note[]>("get_notes")); }
+        catch { setReloadRequired(true); }
+        throw error;
+      }
+    });
+  }
+
+  async function resolveConflict(id: number, choice: ResolutionChoice): Promise<void> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Reload or retry failed local saves before resolving.";
+      setPendingLink(null);
+      try {
+        await invoke("resolve_conflict", { id, choice });
+        setNotes(await invoke<Note[]>("get_notes"));
+        setConflicts(await invoke<ConflictSummary[]>("list_refresh_conflicts"));
+      } catch (error) {
+        try { setNotes(await invoke<Note[]>("get_notes")); }
+        catch { setReloadRequired(true); }
+        throw error;
+      }
+    });
+  }
+
+  async function exportNote(id: number): Promise<string | null> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Close Export and retry failed saves or reload local notes before exporting.";
+      // The modal prevents editing while pending saves finish and the native
+      // dialog is open. Rust reads the saved note, not a stale React snapshot.
+      return invoke<string | null>("export_note", { id });
+    });
+  }
+
+  async function importMarkdown(): Promise<string | null> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Close Import and retry failed saves or reload before importing.";
+      try {
+        const note = await invoke<Note | null>("import_markdown");
+        if (!note) return null;
+        setNotes((current) => [note, ...current.filter((item) => item.id !== note.id)]);
+        setSearch("");
+        setSelectedCategory("All Notes");
+        setSelectedNoteId(note.id);
+        return note.title;
+      } catch (error) {
+        // An IPC failure can hide a successful insert. Reload, never retry it.
+        try { setNotes(await invoke<Note[]>("get_notes")); }
+        catch { setReloadRequired(true); }
+        throw error;
+      }
+    });
+  }
+
+  async function uploadNote(id: number, createNew: boolean): Promise<void> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Retry failed local saves or reload before uploading.";
+      setPendingLink(null);
+      try {
+        await invoke(createNew ? "create_server_note" : "upload_note", { id });
+        setNotes(await invoke<Note[]>("get_notes"));
+      } catch (error) {
+        try { setNotes(await invoke<Note[]>("get_notes")); }
+        catch { setReloadRequired(true); }
+        throw error;
+      }
+    });
   }
 
   const selectedNote = notes.find(
@@ -93,6 +220,11 @@ function App() {
 
     updateNoteField("content", updatedContent);
 
+    saveNote({
+      ...selectedNote,
+      content: updatedContent,
+    });
+
     requestAnimationFrame(() => {
       textarea.focus();
 
@@ -123,13 +255,14 @@ function App() {
 
     if (selectedText.length === 0) return;
 
-    setPendingLink({ start, end, text: selectedText, url: "" });
+    setPendingLink({ noteId: selectedNote.id, start, end, text: selectedText, url: "" });
   }
 
   function applyLink() {
     const textarea = editorRef.current;
 
     if (!textarea || !selectedNote || !pendingLink) return;
+    if (pendingLink.noteId !== selectedNote.id) return;
 
     const url = pendingLink.url.trim();
 
@@ -147,7 +280,7 @@ function App() {
       ...selectedNote,
       content: updatedContent,
     });
-    
+
     setPendingLink(null);
 
     requestAnimationFrame(() => {
@@ -419,6 +552,8 @@ function formatChecklist() {
   ) {
     if (!selectedNote) return;
 
+    void saveNote({ ...selectedNote, [field]: value });
+
     setNotes((currentNotes) =>
       currentNotes.map((note) =>
         note.id === selectedNote.id
@@ -448,24 +583,31 @@ function formatChecklist() {
   }
 
   async function saveNote(note: Note) {
+    setPendingSaves((count) => count + 1);
     try {
-      const updatedNote = await invoke<Note>("update_note", {
+      const updatedNote = await enqueueSave(() => invoke<Note>("update_note", {
         id: note.id,
         title: note.title,
         content: note.content,
         category: note.category,
         favorite: note.favorite,
-      });
+      }));
 
       setNotes((currentNotes) =>
         currentNotes.map((currentNote) =>
           currentNote.id === updatedNote.id
-            ? updatedNote
+            ? acknowledgeSave(currentNote, note, updatedNote)
             : currentNote,
         ),
       );
+      failedSaves.current.delete(note.id);
+      if (failedSaves.current.size === 0) setSaveError(null);
     } catch (error) {
       console.error("Failed to save note:", error);
+      failedSaves.current.add(note.id);
+      setSaveError("Save failed. Your edits remain here; please retry before closing.");
+    } finally {
+      setPendingSaves((count) => count - 1);
     }
   }
 
@@ -493,28 +635,24 @@ function formatChecklist() {
 
   async function deleteNote() {
     if (!selectedNote) return;
-
-    const confirmed = window.confirm(
-      `Delete "${selectedNote.title}"?`,
-    );
-
-    if (!confirmed) return;
+    if (deleteConfirmation !== selectedNote.id) return;
 
     try {
-      await invoke("delete_note", {
+      await enqueueSave(() => invoke("delete_note", {
         id: selectedNote.id,
-      });
+      }));
 
       const remainingNotes = notes.filter(
         (note) => note.id !== selectedNote.id,
       );
 
-      setNotes(remainingNotes);
-      setSelectedNoteId(
-        remainingNotes.length > 0 ? remainingNotes[0].id : null,
-      );
+      setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
+      setSelectedNoteId((current) => current === selectedNote.id
+        ? remainingNotes[0]?.id ?? null : current);
+      setDeleteConfirmation(null);
     } catch (error) {
       console.error("Failed to delete note:", error);
+      setSaveError("Could not delete the note. Please try again.");
     }
   }
 
@@ -552,13 +690,25 @@ function formatChecklist() {
             ⌕
           </button>
 
-          <button className="icon-button" title="Settings">
+          <button disabled={reloadRequired || refreshOpen} title="Refresh from Nextcloud (download only)" onClick={() => setRefreshOpen(true)}>↻ Refresh</button>
+          <button disabled={reloadRequired} onClick={() => setImportMarkdownOpen(true)}>Import Markdown…</button>
+          <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setExportTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Export Markdown…</button>
+          <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setUploadTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Upload selected note…</button>
+          <button onClick={() => setConflictsOpen(true)}>Saved conflicts{conflicts.length > 0 ? ` (${conflicts.length})` : ""}</button>
+          <button className="icon-button" title="Settings" disabled={reloadRequired} onClick={() => setSettingsOpen(true)}>
             ⚙
           </button>
         </div>
       </header>
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} onImported={refreshImportedNotes} onRefresh={refreshFromServer} />}
+      {refreshOpen && <Refresh onClose={() => setRefreshOpen(false)} onRefresh={refreshFromServer} />}
+      {exportTarget && <Export title={exportTarget.title} onClose={() => setExportTarget(null)} onExport={() => exportNote(exportTarget.id)} />}
+      {importMarkdownOpen && <ImportMarkdown onClose={() => setImportMarkdownOpen(false)} onImport={importMarkdown} />}
+      {conflictsOpen && <Conflicts onClose={() => setConflictsOpen(false)} onResolve={resolveConflict} />}
+      {uploadTarget && <Upload id={uploadTarget.id} title={uploadTarget.title} onClose={() => setUploadTarget(null)} onUpload={(createNew) => uploadNote(uploadTarget.id, createNew)} />}
+      {reloadRequired && <div role="alert">Local notes could not be reloaded after refresh. Editing is paused to protect your notes. <button onClick={() => window.location.reload()}>Reload local notes</button></div>}
 
-      <div className="workspace">
+      <div className="workspace" inert={reloadRequired}>
         <aside className="sidebar">
           <button
             className="new-note-button"
@@ -730,7 +880,7 @@ function formatChecklist() {
 
                   <button
                     className="editor-icon-button"
-                    onClick={deleteNote}
+                    onClick={() => setDeleteConfirmation(selectedNote.id)}
                     title="Delete note"
                   >
                     🗑
@@ -738,18 +888,50 @@ function formatChecklist() {
                 </div>
               </div>
 
-              <div className="formatting-toolbar">
+              {deleteConfirmation === selectedNote.id && (
+                <div className="link-editor" role="alert">
+                  <span>Delete “{selectedNote.title}”? This cannot be undone.</span>
+                  <button onClick={deleteNote}>Delete permanently</button>
+                  <button onClick={() => setDeleteConfirmation(null)}>Cancel</button>
+                </div>
+              )}
+
+              <div className="formatting-toolbar" onMouseDown={(event) => event.preventDefault()}>
                 <button
                   title="Bold"
                   onClick={() => formatSelection("**")}><strong>B</strong></button>
 
                 <button
                   title="Italic"
-                  onClick={() => formatSelection("*")}><em>I</em></button>
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      formatSelection("*");
+                    }
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    formatSelection("*");
+                  }}
+                  >
+                    <em>I</em>
+                </button>
 
                 <button
                   title="Strikethrough"
-                  onClick={() => formatSelection("~~")}><s>S</s></button>
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      formatSelection("~~");
+                    }
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    formatSelection("~~");
+                  }}
+                >
+                  <s>S</s>
+                </button>
 
                 <span className="toolbar-divider" />
 
@@ -771,6 +953,12 @@ function formatChecklist() {
                 <button
                   type="button"
                   title="Link"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      formatLink();
+                    }
+                  }}
                   onMouseDown={(event) => {
                     event.preventDefault();
                     formatLink();
@@ -782,10 +970,7 @@ function formatChecklist() {
                 <button
                   type="button"
                   title="Code"
-                  onClick={() => {
-                    console.log("CODE CLICK");
-                    alert("CODE CLICK");
-                  }}
+                  onClick={() => formatSelection("`")}
                 >
                   &lt;/&gt;
                 </button>
@@ -802,6 +987,7 @@ function formatChecklist() {
                   <span>URL</span>
                   <input
                     autoFocus
+                    aria-label="Link URL"
                     type="url"
                     placeholder="https://example.com"
                     value={pendingLink.url}
@@ -837,9 +1023,11 @@ function formatChecklist() {
               />
 
               <div className="editor-footer">
+                {conflicts.some((conflict) => conflict.local_id === selectedNote.id && !conflict.resolution) && <button onClick={() => setConflictsOpen(true)}>Conflict saved — compare versions</button>}
                 <span>Markdown</span>
                 <span>•</span>
-                <span>Saved locally</span>
+                <span role="status">{saveError ?? (pendingSaves > 0 ? "Saving…" : "Saved locally")}</span>
+                {saveError && <button onClick={saveCurrentNote}>Retry save</button>}
               </div>
             </>
           ) : (
