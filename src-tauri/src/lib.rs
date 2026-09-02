@@ -14,6 +14,7 @@ mod export;
 mod markdown_import;
 mod recovery;
 mod sync_status;
+mod trash;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +27,8 @@ pub fn run() {
             commands::create_note,
             commands::update_note,
             commands::delete_note,
+            trash::list_trashed_notes,
+            trash::restore_note,
             settings::get_server_url,
             settings::save_server_url,
             auth::begin_login,

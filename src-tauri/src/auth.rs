@@ -118,7 +118,7 @@ struct LoginSession {
     poll: Poll,
     started: Instant,
     last_poll: Option<Instant>,
-    // A successful poll can only be consumed once. Retain it if Keychain fails.
+    // A successful poll can only be consumed once. Retain it if secure storage fails.
     received: Option<Credentials>,
 }
 
@@ -239,23 +239,45 @@ async fn read_json<T: DeserializeOwned>(mut response: Response) -> Result<T, Str
     serde_json::from_slice(&bytes).map_err(|_| "Nextcloud returned an invalid login response.".into())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn storage_help() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Allow access to macOS Keychain."
+    } else {
+        "Enable and unlock a Secret Service-compatible desktop wallet (such as GNOME Keyring or KWallet) in your desktop session."
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn credential_entry(server: &str) -> Result<keyring::Entry, String> {
+    // Preserve the existing macOS service/account identifiers exactly.
+    keyring::Entry::new("com.rustynotes.nextcloud", server)
+        .map_err(|_| format!("Could not access secure credential storage. {}", storage_help()))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn store_credentials(credentials: &Credentials) -> Result<(), String> {
-    let entry = keyring::Entry::new("com.rustynotes.nextcloud", &credentials.server)
-        .map_err(|_| "Could not access macOS Keychain.".to_string())?;
+    store_credentials_in(&credential_entry(&credentials.server)?, credentials)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn store_credentials_in(entry: &keyring::Entry, credentials: &Credentials) -> Result<(), String> {
     let secret = serde_json::to_string(credentials).map_err(|_| "Could not prepare credentials.".to_string())?;
-    entry.set_password(&secret).map_err(|_| "Could not save credentials in Keychain. Allow access, then choose Retry login check. Do not cancel or quit if you want to retry saving this authorization.".to_string())
+    entry.set_password(&secret).map_err(|_| format!("Could not save credentials securely. {} Then choose Retry login check. Do not cancel or quit if you want to retry saving this authorization.", storage_help()))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn store_credentials(_: &Credentials) -> Result<(), String> {
-    Err("Secure login storage is currently implemented only for macOS.".into())
+    Err("Secure login storage is currently implemented only for macOS and Linux.".into())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn load_credentials(server: &str) -> Result<Option<Credentials>, String> {
-    let entry = keyring::Entry::new("com.rustynotes.nextcloud", server)
-        .map_err(|_| "Could not access macOS Keychain.".to_string())?;
+    load_credentials_from(&credential_entry(server)?, server)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn load_credentials_from(entry: &keyring::Entry, server: &str) -> Result<Option<Credentials>, String> {
     match entry.get_password() {
         Ok(secret) => {
             let mut credentials: Credentials = serde_json::from_str(&secret)
@@ -264,13 +286,13 @@ fn load_credentials(server: &str) -> Result<Option<Credentials>, String> {
             Ok(Some(credentials))
         }
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err("Could not read macOS Keychain. Please allow access and reopen Settings.".into()),
+        Err(_) => Err(format!("Could not read secure credential storage. {} Then reopen Settings.", storage_help())),
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn load_credentials(_: &str) -> Result<Option<Credentials>, String> {
-    Err("Secure credential storage is currently implemented only for macOS.".into())
+    Err("Secure credential storage is currently implemented only for macOS and Linux.".into())
 }
 
 fn stored_login(server: &str) -> Result<Option<String>, String> {
@@ -292,8 +314,8 @@ pub async fn get_login_status(state: tauri::State<'_, LoginState>) -> Result<Log
 
 #[tauri::command]
 pub async fn begin_login(app: tauri::AppHandle, state: tauri::State<'_, LoginState>) -> Result<(), String> {
-    if !cfg!(target_os = "macos") {
-        return Err("Secure login storage is currently implemented only for macOS.".into());
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return Err("Secure login storage is currently implemented only for macOS and Linux.".into());
     }
     let mut guard = state.0.lock().await;
     if guard.is_some() { return Err("A login is already active. Cancel it before starting again.".into()); }
@@ -352,6 +374,56 @@ pub async fn cancel_login(state: tauri::State<'_, LoginState>) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Entry-local mocks avoid touching the user's wallet or changing global builders.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn mock_entry() -> keyring::Entry {
+        keyring::Entry::new_with_credential(Box::new(keyring::mock::MockCredential::default()))
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn secure_entry_round_trip_and_missing_entry() {
+        let entry = mock_entry();
+        let credentials = fake_session().received.unwrap();
+        assert!(load_credentials_from(&entry, &credentials.server).unwrap().is_none());
+        store_credentials_in(&entry, &credentials).unwrap();
+        let loaded = load_credentials_from(&entry, &credentials.server).unwrap().unwrap();
+        assert_eq!(loaded.server, credentials.server);
+        assert_eq!(loaded.login_name, credentials.login_name);
+        assert_eq!(loaded.app_password, credentials.app_password);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn stored_invalid_credentials_and_wrong_server_are_rejected() {
+        let entry = mock_entry();
+        let credentials = fake_session().received.unwrap();
+        entry.set_password("malformed-secret-do-not-echo").unwrap();
+        let error = load_credentials_from(&entry, &credentials.server).err().unwrap();
+        assert!(!error.contains("malformed-secret"));
+        store_credentials_in(&entry, &credentials).unwrap();
+        assert!(load_credentials_from(&entry, "https://other.example.com/").is_err());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn wallet_errors_are_not_missing_entries_and_do_not_expose_secrets() {
+        let entry = mock_entry();
+        let credentials = fake_session().received.unwrap();
+        let mock: &keyring::mock::MockCredential = entry.get_credential().downcast_ref().unwrap();
+        mock.set_error(keyring::Error::Invalid("private-provider-detail".into(), "fake-password".into()));
+        let error = store_credentials_in(&entry, &credentials).unwrap_err();
+        assert!(error.contains("Retry login check"));
+        assert!(!error.contains("private-provider-detail") && !error.contains("fake-password"));
+        assert!(load_credentials_from(&entry, &credentials.server).unwrap().is_none());
+        store_credentials_in(&entry, &credentials).unwrap();
+        mock.set_error(keyring::Error::NoStorageAccess(Box::new(std::io::Error::other("private-provider-detail"))));
+        let error = load_credentials_from(&entry, &credentials.server).err().unwrap();
+        assert!(error.contains("reopen Settings"));
+        assert!(!error.contains("private-provider-detail"));
+        assert!(load_credentials_from(&entry, &credentials.server).unwrap().is_some());
+    }
 
     fn fake_session() -> LoginSession {
         LoginSession {

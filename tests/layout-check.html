@@ -1,8 +1,12 @@
 <!doctype html><html><head><meta charset="UTF-8"><title>RustyNotes isolated layout test</title></head><body><div id="root"></div><script>
 // Development-only fixture: synthetic notes, no native database or network access.
 const notes=Array.from({length:434},(_,i)=>({id:i+1,title:`Layout test note ${i+1}`,content:'Synthetic Markdown text for layout testing.',category:'Personal',favorite:false,modified_at:1}));
-window.__TAURI_INTERNALS__={invoke:async(command)=>{
+const trash=[];
+window.__TAURI_INTERNALS__={invoke:async(command,args)=>{
 if(command==='get_notes')return notes;
+if(command==='list_trashed_notes')return [...trash];
+if(command==='delete_note'){const index=notes.findIndex(n=>n.id===args.id);if(index>=0)trash.push(...notes.splice(index,1));return;}
+if(command==='restore_note'){const index=trash.findIndex(n=>n.id===args.id);if(index<0)throw new Error('Missing note');const [note]=trash.splice(index,1);notes.push(note);return note;}
 if(command==='list_refresh_conflicts')return [];
 if(command==='get_note_sync_status')return {kind:'matches_snapshot',server:'https://test.invalid/',account:'test'};
 throw new Error('Not available in isolated layout test');

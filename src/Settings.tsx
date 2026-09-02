@@ -162,7 +162,7 @@ export function Settings({ onClose, onImported, onRefresh }: { onClose: () => vo
     <dialog ref={dialog} className="settings-dialog" aria-labelledby="settings-title" onCancel={(event) => { event.preventDefault(); void close(); }}>
       <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <h2 id="settings-title">Nextcloud settings</h2>
-        <p>Your notes stay available offline. Login uses your default browser and stores only an app-specific password in macOS Keychain.</p>
+        <p>Your notes stay available offline. Login uses your default browser. The app-specific password is stored securely in macOS Keychain or a Linux Secret Service desktop wallet (such as GNOME Keyring or KWallet), never in your notes database.</p>
         <label htmlFor="server-url">Nextcloud server address</label>
         <input id="server-url" type="text" inputMode="url" autoCapitalize="none" spellCheck={false}
           placeholder="https://cloud.example.com" value={serverUrl} disabled={loading || saving || loginActive || canceling || networkBusy}

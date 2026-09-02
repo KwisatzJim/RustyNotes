@@ -14,12 +14,14 @@ pub struct Note {
 }
 
 fn database_path() -> PathBuf {
-    let home = dirs::home_dir().expect("Could not determine home directory");
+    // macOS keeps the existing ~/Library/Application Support location.
+    // Linux uses XDG_DATA_HOME, falling back to ~/.local/share.
+    let data_dir = dirs::data_local_dir().expect("Could not determine application data directory");
+    database_path_in(&data_dir)
+}
 
-    home.join("Library")
-        .join("Application Support")
-        .join("RustyNotes")
-        .join("rustynotes.db")
+fn database_path_in(data_dir: &std::path::Path) -> PathBuf {
+    data_dir.join("RustyNotes").join("rustynotes.db")
 }
 
 pub fn open_database() -> Result<Connection> {
@@ -58,6 +60,14 @@ pub(crate) fn initialize_database(connection: &Connection) -> Result<()> {
             local_key TEXT NOT NULL,
             server_key TEXT NOT NULL,
             UNIQUE(local_id, local_key, server_key)
+        );
+        CREATE TABLE IF NOT EXISTS trashed_notes (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            category TEXT NOT NULL,
+            favorite INTEGER NOT NULL,
+            modified_at INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS conflict_resolutions (
             conflict_id INTEGER PRIMARY KEY,
@@ -192,12 +202,45 @@ pub fn update_note(
 }
 
 pub fn delete_note(id: i64) -> Result<()> {
-    let connection = open_database()?;
+    crate::trash::move_note(&mut open_database()?, id)
+}
 
-    connection.execute(
-        "DELETE FROM notes WHERE id = ?1",
-        [id],
-    )?;
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    use std::path::Path;
 
-    Ok(())
+    #[test]
+    fn linux_default_data_directory_keeps_database_under_app_folder() {
+        assert_eq!(
+            database_path_in(Path::new("/home/test/.local/share")),
+            PathBuf::from("/home/test/.local/share/RustyNotes/rustynotes.db")
+        );
+    }
+
+    #[test]
+    fn custom_data_directory_is_preserved_including_spaces() {
+        assert_eq!(
+            database_path_in(Path::new("/mnt/user data")),
+            PathBuf::from("/mnt/user data/RustyNotes/rustynotes.db")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn actual_macos_path_is_identical_to_original_location() {
+        let original = dirs::home_dir().unwrap()
+            .join("Library").join("Application Support")
+            .join("RustyNotes").join("rustynotes.db");
+        assert_eq!(database_path(), original);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_uses_absolute_xdg_override_or_home_fallback() {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from).filter(|path| path.is_absolute())
+            .unwrap_or_else(|| dirs::home_dir().unwrap().join(".local/share"));
+        assert_eq!(database_path(), base.join("RustyNotes/rustynotes.db"));
+    }
 }

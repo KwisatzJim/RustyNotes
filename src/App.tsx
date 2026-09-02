@@ -10,6 +10,7 @@ import { Export } from "./Export";
 import { ImportMarkdown } from "./ImportMarkdown";
 import { Recovery } from "./Recovery";
 import { NoteSyncStatus } from "./NoteSyncStatus";
+import { Trash } from "./Trash";
 import type { ConflictSummary, RefreshSummary, ResolutionChoice } from "./syncTypes";
 
 interface Note {
@@ -29,6 +30,10 @@ function App() {
   const [exportTarget, setExportTarget] = useState<{ id: number; title: string } | null>(null);
   const [importMarkdownOpen, setImportMarkdownOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashBusy, setTrashBusy] = useState(false);
+  const trashLocked = useRef(false);
+  const [trashError, setTrashError] = useState("");
   const [conflicts, setConflicts] = useState<ConflictSummary[]>([]);
   const [reloadRequired, setReloadRequired] = useState(false);
   const failedSaves = useRef(new Set<number>());
@@ -646,11 +651,16 @@ function formatChecklist() {
   async function deleteNote() {
     if (!selectedNote) return;
     if (deleteConfirmation !== selectedNote.id) return;
+    if (trashLocked.current) return;
+    trashLocked.current = true;
+    setTrashBusy(true);
+    setTrashError("");
 
     try {
-      await enqueueSave(() => invoke("delete_note", {
-        id: selectedNote.id,
-      }));
+      await enqueueSave(async () => {
+        if (failedSaves.current.size > 0 || reloadRequired) throw "Save your changes successfully before moving a note to Trash.";
+        await invoke("delete_note", { id: selectedNote.id });
+      });
 
       const remainingNotes = notes.filter(
         (note) => note.id !== selectedNote.id,
@@ -662,8 +672,23 @@ function formatChecklist() {
       setDeleteConfirmation(null);
     } catch (error) {
       console.error("Failed to delete note:", error);
-      setSaveError("Could not delete the note. Please try again.");
+      setTrashError(typeof error === "string" ? error : "Could not move the note to Trash. Check Trash before trying again.");
+    } finally {
+      trashLocked.current = false;
+      setTrashBusy(false);
     }
+  }
+
+  async function restoreNote(id: number) {
+    await enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Save your changes successfully before restoring a note.";
+      const restored = await invoke<Note>("restore_note", { id });
+      setNotes((current) => [restored, ...current.filter((note) => note.id !== id)]);
+      setSelectedNoteId(id);
+      setSelectedCategory("All Notes");
+      setSearch("");
+      setTrashError("");
+    });
   }
 
   function formatDate(timestamp: number) {
@@ -681,7 +706,7 @@ function formatChecklist() {
 
   return (
     <div className="app">
-      <header className="topbar">
+      <header className="topbar" inert={trashBusy}>
         <div className="brand">
           <div className="brand-mark">R</div>
           <span>RustyNotes</span>
@@ -717,10 +742,12 @@ function formatChecklist() {
       {importMarkdownOpen && <ImportMarkdown onClose={() => setImportMarkdownOpen(false)} onImport={importMarkdown} />}
       {conflictsOpen && <Conflicts onClose={() => setConflictsOpen(false)} onResolve={resolveConflict} />}
       {recoveryOpen && <Recovery onClose={() => setRecoveryOpen(false)} onRecover={recoverCreation} />}
+      {trashOpen && <Trash onClose={() => setTrashOpen(false)} onRestore={restoreNote} />}
       {uploadTarget && <Upload id={uploadTarget.id} title={uploadTarget.title} onClose={() => setUploadTarget(null)} onUpload={(createNew) => uploadNote(uploadTarget.id, createNew)} />}
       {reloadRequired && <div role="alert">Local notes could not be reloaded after refresh. Editing is paused to protect your notes. <button onClick={() => window.location.reload()}>Reload local notes</button></div>}
 
-      <div className="workspace" inert={reloadRequired}>
+      {trashError && <p role="alert">{trashError}</p>}
+      <div className="workspace" inert={reloadRequired || trashBusy}>
         <aside className="sidebar">
           <button
             className="new-note-button"
@@ -731,6 +758,7 @@ function formatChecklist() {
           </button>
 
           <nav className="navigation">
+            <button className="nav-item" onClick={() => setTrashOpen(true)}>🗑 Local Trash</button>
             <button
               className={`nav-item ${
                 selectedCategory === "All Notes" ? "active" : ""
@@ -893,7 +921,7 @@ function formatChecklist() {
                   <button
                     className="editor-icon-button"
                     onClick={() => setDeleteConfirmation(selectedNote.id)}
-                    title="Delete note"
+                    title="Move note to local Trash"
                   >
                     🗑
                   </button>
@@ -902,8 +930,8 @@ function formatChecklist() {
 
               {deleteConfirmation === selectedNote.id && (
                 <div className="link-editor" role="alert">
-                  <span>Delete “{selectedNote.title}”? This cannot be undone.</span>
-                  <button onClick={deleteNote}>Delete permanently</button>
+                  <span>Move “{selectedNote.title}” to local Trash? You can restore it later. Nextcloud is unchanged.</span>
+                  <button onClick={deleteNote}>Move to Trash</button>
                   <button onClick={() => setDeleteConfirmation(null)}>Cancel</button>
                 </div>
               )}
@@ -1036,7 +1064,7 @@ function formatChecklist() {
 
               <div className="editor-footer">
                 <NoteSyncStatus note={selectedNote} saving={pendingSaves > 0}
-                  paused={settingsOpen || refreshOpen || conflictsOpen || recoveryOpen || importMarkdownOpen || !!exportTarget || !!uploadTarget}
+                  paused={settingsOpen || refreshOpen || conflictsOpen || recoveryOpen || trashOpen || trashBusy || importMarkdownOpen || !!exportTarget || !!uploadTarget}
                   saveFailed={!!saveError || reloadRequired}
                   onConflicts={() => setConflictsOpen(true)} onRecovery={() => setRecoveryOpen(true)} />
                 <span>Markdown</span>
