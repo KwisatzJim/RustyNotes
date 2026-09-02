@@ -9,6 +9,7 @@ import { Refresh } from "./Refresh";
 import { Export } from "./Export";
 import { ImportMarkdown } from "./ImportMarkdown";
 import { Recovery } from "./Recovery";
+import { NoteSyncStatus } from "./NoteSyncStatus";
 import type { ConflictSummary, RefreshSummary, ResolutionChoice } from "./syncTypes";
 
 interface Note {
@@ -1034,7 +1035,10 @@ function formatChecklist() {
               />
 
               <div className="editor-footer">
-                {conflicts.some((conflict) => conflict.local_id === selectedNote.id && !conflict.resolution) && <button onClick={() => setConflictsOpen(true)}>Conflict saved — compare versions</button>}
+                <NoteSyncStatus note={selectedNote} saving={pendingSaves > 0}
+                  paused={settingsOpen || refreshOpen || conflictsOpen || recoveryOpen || importMarkdownOpen || !!exportTarget || !!uploadTarget}
+                  saveFailed={!!saveError || reloadRequired}
+                  onConflicts={() => setConflictsOpen(true)} onRecovery={() => setRecoveryOpen(true)} />
                 <span>Markdown</span>
                 <span>•</span>
                 <span role="status">{saveError ?? (pendingSaves > 0 ? "Saving…" : "Saved locally")}</span>

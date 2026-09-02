@@ -560,6 +560,12 @@ button {
   color: #999;
 }
 
+.note-sync-status {
+  color: #4b4b52;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .empty-icon {
   margin-bottom: 12px;
   font-size: 32px;

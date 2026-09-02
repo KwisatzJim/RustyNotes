@@ -212,6 +212,24 @@ Native dialog reference: [Tauri Dialog](https://v2.tauri.app/plugin/dialog/).
   note should still be present. Restart to check persistence. Test cancellation
   separately and verify the note count does not change.
 
+## Selected-note sync status
+
+- The editor footer reports **Local only**, **Local changes**, **Matches last
+  server snapshot**, **Conflict saved**, or **Upload recovery needed**. Hover
+  for an explanation and the associated server/account when one exists.
+- All information comes from a consistent local database snapshot; no network
+  request is made. A match never claims that the live server is unchanged.
+- Unfinished creation attempts take priority. Unresolved saved conflicts take
+  priority over a plain local-change comparison. Resolved historical conflicts
+  do not keep the conflict status active. Modification times alone are ignored.
+- Pending or failed local saves do not display a stale matching status. Responses
+  for an old selection are ignored. Status is reread after modal operations close,
+  including link recovery, upload, refresh, import and conflict resolution.
+- Manual checkpoint: select a known uploaded note and expect **Matches last
+  server snapshot**. Edit it locally and wait for **Saved locally**; expect
+  **Local changes**. A new or Markdown-imported unlinked note says **Local only**.
+  Conflict/recovery indicators link to their review screens.
+
 ## Failure handling
 
 Next manual checkpoint: open the latest unresolved comparison, choose
