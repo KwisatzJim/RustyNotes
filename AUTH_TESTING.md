@@ -146,11 +146,35 @@ Newer edits and local deletion during a request are preserved.
 
 Current conservative limitation: any unconfirmed POST blocks creation for that
 local note, across restart and account changes. Refresh does not clear this
-guard. No automatic matching by title/content or reset button is provided:
-neither can prove whether a lost request created a server note. Review Nextcloud;
-if refresh imports the server copy, use that linked copy for future uploads and
-keep the original local copy until its contents have been compared. If no copy
-appears, stop and diagnose before attempting another creation.
+guard. Use **Recover uploads…** to review a downloaded server copy and explicitly
+transfer its association to the original local note. There is no automatic
+matching or reset button: matching text alone cannot prove server identity.
+If no eligible copy appears, stop and diagnose before attempting another creation.
+
+## Interrupted new-note upload recovery
+
+- This is local-only; use Refresh first to download possible server copies.
+  The screen lists unfinished creation attempts whose original local notes
+  still exist, with the recorded server/account. Deleted originals are not
+  recreated and completed uploads do not appear.
+- Candidates must belong to the attempt's exact server/account. If a server
+  response ID was saved, only that ID is eligible. Otherwise the saved submitted
+  content and favorite flag must match; the user must verify title/category,
+  content and identity. Multiple matches remain separate choices.
+- Locally edited downloaded copies, unresolved conflicts and unfinished
+  creation attempts on the copy are excluded. Deletion or any change to the
+  reviewed original/copy/baseline invalidates confirmation.
+- Confirmation atomically moves the downloaded copy's server association to
+  the original note, marks creation complete and retains the reviewed snapshots
+  in a recovery-history table. Neither local note's text is changed or deleted.
+  The extra copy is now local-only. Future explicit uploads from the original
+  use the existing conditional-update path. Repeating the confirmation is safe.
+- Manual checkpoint with no interrupted attempts: open **Recover uploads…**;
+  expect “No interrupted uploads need recovery.” Close normally. Do not
+  intentionally interrupt a real server write just to populate this screen.
+  Database tests simulate lost responses and imported copies to exercise actual
+  recovery, wrong-account rejection, ambiguous matches, stale comparisons,
+  failed transactions and persistence across reopen.
 
 ## Single-note Markdown export
 

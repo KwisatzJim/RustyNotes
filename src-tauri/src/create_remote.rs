@@ -4,7 +4,7 @@ use reqwest::{Client, Response, StatusCode};
 use rusqlite::{Connection, TransactionBehavior};
 use url::Url;
 
-const REVIEW: &str = "New-note creation could not be confirmed. Your local note is preserved. To prevent duplicates, creation is blocked for this note, even after restart. Check Nextcloud and refresh; if a server copy appears, use that imported copy for further uploads. Do not recreate or re-upload this note blindly.";
+const REVIEW: &str = "New-note creation could not be confirmed. Your local note is preserved. To prevent duplicates, creation is blocked for this note, even after restart. Check Nextcloud, refresh, then open Recover uploads to review a downloaded server copy. Do not recreate or re-upload this note blindly.";
 
 fn local(db: &Connection, id: i64) -> Result<Note, String> {
     db.query_row(

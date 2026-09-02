@@ -80,6 +80,11 @@ pub(crate) fn initialize_database(connection: &Connection) -> Result<()> {
             server_snapshot TEXT,
             completed INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS creation_recoveries (
+            local_id INTEGER PRIMARY KEY,
+            copy_id INTEGER NOT NULL,
+            review_snapshot TEXT NOT NULL
+        );
         "#,
     )?;
 

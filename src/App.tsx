@@ -8,6 +8,7 @@ import { Upload } from "./Upload";
 import { Refresh } from "./Refresh";
 import { Export } from "./Export";
 import { ImportMarkdown } from "./ImportMarkdown";
+import { Recovery } from "./Recovery";
 import type { ConflictSummary, RefreshSummary, ResolutionChoice } from "./syncTypes";
 
 interface Note {
@@ -26,6 +27,7 @@ function App() {
   const [uploadTarget, setUploadTarget] = useState<{ id: number; title: string } | null>(null);
   const [exportTarget, setExportTarget] = useState<{ id: number; title: string } | null>(null);
   const [importMarkdownOpen, setImportMarkdownOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [conflicts, setConflicts] = useState<ConflictSummary[]>([]);
   const [reloadRequired, setReloadRequired] = useState(false);
   const failedSaves = useRef(new Set<number>());
@@ -122,6 +124,13 @@ function App() {
         catch { setReloadRequired(true); }
         throw error;
       }
+    });
+  }
+
+  async function recoverCreation(id: number, copyId: number, token: string): Promise<void> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Close Recovery and retry failed saves or reload before recovering.";
+      await invoke("recover_creation", { id, copyId, token });
     });
   }
 
@@ -695,6 +704,7 @@ function formatChecklist() {
           <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setExportTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Export Markdown…</button>
           <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setUploadTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Upload selected note…</button>
           <button onClick={() => setConflictsOpen(true)}>Saved conflicts{conflicts.length > 0 ? ` (${conflicts.length})` : ""}</button>
+          <button disabled={reloadRequired} onClick={() => setRecoveryOpen(true)}>Recover uploads…</button>
           <button className="icon-button" title="Settings" disabled={reloadRequired} onClick={() => setSettingsOpen(true)}>
             ⚙
           </button>
@@ -705,6 +715,7 @@ function formatChecklist() {
       {exportTarget && <Export title={exportTarget.title} onClose={() => setExportTarget(null)} onExport={() => exportNote(exportTarget.id)} />}
       {importMarkdownOpen && <ImportMarkdown onClose={() => setImportMarkdownOpen(false)} onImport={importMarkdown} />}
       {conflictsOpen && <Conflicts onClose={() => setConflictsOpen(false)} onResolve={resolveConflict} />}
+      {recoveryOpen && <Recovery onClose={() => setRecoveryOpen(false)} onRecover={recoverCreation} />}
       {uploadTarget && <Upload id={uploadTarget.id} title={uploadTarget.title} onClose={() => setUploadTarget(null)} onUpload={(createNew) => uploadNote(uploadTarget.id, createNew)} />}
       {reloadRequired && <div role="alert">Local notes could not be reloaded after refresh. Editing is paused to protect your notes. <button onClick={() => window.location.reload()}>Reload local notes</button></div>}
 

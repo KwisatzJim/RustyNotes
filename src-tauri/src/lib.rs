@@ -12,6 +12,7 @@ mod upload;
 mod create_remote;
 mod export;
 mod markdown_import;
+mod recovery;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +42,9 @@ pub fn run() {
             create_remote::create_server_note,
             export::export_note,
             markdown_import::import_markdown,
+            recovery::list_creation_recoveries,
+            recovery::get_creation_recovery,
+            recovery::recover_creation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
