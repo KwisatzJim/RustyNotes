@@ -26,6 +26,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Jim Kelley",
+    "homepage": "https://github.com/KwisatzJim/RustyNotes",
+    "category": "Productivity",
+    "shortDescription": "Local-first Markdown notes with manual Nextcloud Notes synchronization",
+    "longDescription": "RustyNotes is a desktop Markdown notes app with offline editing, categories, favorites, and Markdown import and export. Connect to your own Nextcloud Notes server using Login Flow v2. Download changes manually, review saved conflicts, and explicitly upload one selected note at a time. Local Trash does not delete server notes. This is alpha software; keep backups of important notes.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

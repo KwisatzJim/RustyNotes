@@ -1,8 +1,10 @@
 [package]
 name = "rustynotes"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Local-first Markdown notes with manual Nextcloud Notes synchronization"
+authors = ["Jim Kelley"]
+homepage = "https://github.com/KwisatzJim/RustyNotes"
+repository = "https://github.com/KwisatzJim/RustyNotes"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

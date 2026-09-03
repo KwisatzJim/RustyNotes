@@ -51,8 +51,13 @@ Verification: local script tests pass. The user confirmed normal launch without
 environment overrides, notes visible, and Check Notes connection successful
 for the same rebuilt AppImage on CachyOS, Ubuntu, and Pop_OS. This verifies
 those workflows on those systems, not every distribution or graphics driver.
-The copyright lookup fallback is unit-tested locally but still requires an
-Ubuntu build test and review of any remaining warnings before distribution.
+The copyright lookup fallback passed an Ubuntu build with 115 recovered notices
+verified byte-for-byte in the AppDir. The user also compared the bundled libenchant
+notice with its system copy after a warning about the copied library; they matched.
+That rebuilt image passed launch and Notes connection checks on all three Linux
+systems, with Refresh confirmed on Ubuntu and Pop_OS. Remaining warnings and
+third-party licensing still need review before public distribution; the notice
+checks are not a complete license audit.
 
 References:
 - https://github.com/linuxdeploy/linuxdeploy/blob/master/src/core/appdir.cpp
