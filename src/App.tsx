@@ -7,6 +7,10 @@ import { Conflicts } from "./Conflicts";
 import { Upload } from "./Upload";
 import { Refresh } from "./Refresh";
 import { Export } from "./Export";
+import { Backup } from "./Backup";
+import { MarkdownPreview, PreviewBoundary } from "./MarkdownPreview";
+import { localChangeIds, localChangeLabel, type LocalChange } from "./localChanges";
+import { oppositeTheme, saveTheme, THEME_KEY, type Theme } from "./theme";
 import { ImportMarkdown } from "./ImportMarkdown";
 import { Recovery } from "./Recovery";
 import { NoteSyncStatus } from "./NoteSyncStatus";
@@ -24,6 +28,15 @@ interface Note {
 
 function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  const [themeSaveFailed, setThemeSaveFailed] = useState(false);
+  function toggleTheme() {
+    const next = oppositeTheme(theme);
+    document.documentElement.dataset.theme = next;
+    setTheme(next);
+    setThemeSaveFailed(!saveTheme(next, value => localStorage.setItem(THEME_KEY, value)));
+  }
+  const [backupOpen, setBackupOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [conflictsOpen, setConflictsOpen] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<{ id: number; title: string } | null>(null);
@@ -43,7 +56,30 @@ function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("All Notes");
+  const [selectedCategory, updateSelectedCategory] = useState("All Notes");
+  const [localChangesOnly, setLocalChangesOnly] = useState(false);
+  const [changes, setChanges] = useState<LocalChange[]>([]);
+  const [changesLoading, setChangesLoading] = useState(true);
+  const [changesError, setChangesError] = useState(false);
+  const [changesRetry, setChangesRetry] = useState(0);
+  function setSelectedCategory(category: string) {
+    setLocalChangesOnly(false);
+    updateSelectedCategory(category);
+  }
+  useEffect(() => {
+    let active = true;
+    setChangesLoading(true);
+    if (pendingSaves > 0) return () => { active = false; };
+    // Debounce rapid saves; one native call reads a consistent local snapshot.
+    const timer = window.setTimeout(() => {
+      void invoke<LocalChange[]>("list_local_changes")
+        .then(result => { if (active) { setChanges(result); setChangesError(false); } })
+        .catch(() => { if (active) setChangesError(true); })
+        .finally(() => { if (active) setChangesLoading(false); });
+    }, 150);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [notes, pendingSaves, changesRetry]);
+  const changedIds = useMemo(() => localChangeIds(changes, failedSaves.current), [changes, saveError, pendingSaves]);
   const [deleteConfirmation, setDeleteConfirmation] = useState<number | null>(null);
   const [pendingLink, setPendingLink] = useState<{
     noteId: number;
@@ -54,6 +90,30 @@ function App() {
   } | null>(null);
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [previewMode, setPreviewMode] = useState(false);
+  const editorPosition = useRef<{ id: number; start: number; end: number; scroll: number } | null>(null);
+  const focusEditor = useRef(false);
+  function changeEditorMode(preview: boolean) {
+    if (preview === previewMode) return;
+    if (preview && selectedNoteId !== null && editorRef.current) {
+      const editor = editorRef.current;
+      editorPosition.current = { id: selectedNoteId, start: editor.selectionStart, end: editor.selectionEnd, scroll: editor.scrollTop };
+      setPendingLink(null);
+    }
+    focusEditor.current = !preview;
+    setPreviewMode(preview);
+  }
+  useEffect(() => {
+    if (previewMode || !focusEditor.current || !editorRef.current) return;
+    focusEditor.current = false;
+    const editor = editorRef.current;
+    editor.focus();
+    const saved = editorPosition.current;
+    if (saved?.id === selectedNoteId) {
+      editor.setSelectionRange(saved.start, saved.end);
+      editor.scrollTop = saved.scroll;
+    }
+  }, [previewMode, selectedNoteId]);
 
   useEffect(() => {
     setPendingLink(null);
@@ -137,6 +197,7 @@ function App() {
     return enqueueSave(async () => {
       if (failedSaves.current.size > 0 || reloadRequired) throw "Close Recovery and retry failed saves or reload before recovering.";
       await invoke("recover_creation", { id, copyId, token });
+      setNotes(await invoke<Note[]>("get_notes"));
     });
   }
 
@@ -146,6 +207,40 @@ function App() {
       // The modal prevents editing while pending saves finish and the native
       // dialog is open. Rust reads the saved note, not a stale React snapshot.
       return invoke<string | null>("export_note", { id });
+    });
+  }
+
+  async function backupLocalData(): Promise<string | null> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Close Backup and retry failed saves or reload local notes before backing up.";
+      return invoke<string | null>("backup_local_data");
+    });
+  }
+
+  async function restoreLocalBackup(token: string): Promise<string> {
+    return enqueueSave(async () => {
+      if (failedSaves.current.size > 0 || reloadRequired) throw "Close Backup and retry failed saves or reload local notes before restoring.";
+      setPendingLink(null);
+      setDeleteConfirmation(null);
+      async function reloadRestoredData() {
+        const restored = await invoke<Note[]>("get_notes");
+        const comparisons = await invoke<ConflictSummary[]>("list_refresh_conflicts");
+        setNotes(restored);
+        setSelectedNoteId(restored[0]?.id ?? null);
+        setConflicts(comparisons);
+        setSearch(""); setSelectedCategory("All Notes");
+      }
+      let safety: string | null = null;
+      try {
+        safety = await invoke<string>("restore_local_backup", { token, confirmed: true });
+        await reloadRestoredData();
+        return safety;
+      } catch (error) {
+        // IPC can fail after a committed restore. Never let stale editor state
+        // overwrite the database, even when the operation reports an error.
+        try { await reloadRestoredData(); } catch { setReloadRequired(true); }
+        throw safety ? `Restore completed, but reloading the screen failed. Reload local notes before continuing. Safety backup: ${safety}` : error;
+      }
     });
   }
 
@@ -204,14 +299,14 @@ function App() {
         note.title.toLowerCase().includes(query) ||
         note.content.toLowerCase().includes(query);
 
-      const matchesCategory =
+      const matchesCategory = localChangesOnly ? changedIds.has(note.id) :
         selectedCategory === "All Notes" ||
         (selectedCategory === "Favorites" && note.favorite) ||
         note.category === selectedCategory;
 
       return matchesSearch && matchesCategory;
     });
-  }, [notes, search, selectedCategory]);
+  }, [notes, search, selectedCategory, localChangesOnly, changedIds]);
 
   function formatSelection(prefix: string, suffix: string = prefix) {
     const textarea = editorRef.current;
@@ -642,6 +737,8 @@ function formatChecklist() {
 
       setNotes((currentNotes) => [newNote, ...currentNotes]);
       setSelectedNoteId(newNote.id);
+      setPreviewMode(false);
+      focusEditor.current = true;
       setSelectedCategory("All Notes");
     } catch (error) {
       console.error("Failed to create note:", error);
@@ -713,6 +810,10 @@ function formatChecklist() {
         </div>
 
         <div className="topbar-actions">
+          <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${oppositeTheme(theme)} theme`} aria-label={`Switch to ${oppositeTheme(theme)} theme`}>
+            <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span> {theme === "dark" ? "Light" : "Dark"}
+          </button>
+          {themeSaveFailed && <span role="status" className="theme-save-warning">Theme changed, but could not be saved for next launch.</span>}
           <button
             className="icon-button"
             title="Search"
@@ -726,6 +827,7 @@ function formatChecklist() {
           </button>
 
           <button disabled={reloadRequired || refreshOpen} title="Refresh from Nextcloud (download only)" onClick={() => setRefreshOpen(true)}>↻ Refresh</button>
+          <button disabled={reloadRequired} onClick={() => setBackupOpen(true)}>Back up local data…</button>
           <button disabled={reloadRequired} onClick={() => setImportMarkdownOpen(true)}>Import Markdown…</button>
           <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setExportTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Export Markdown…</button>
           <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setUploadTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Upload selected note…</button>
@@ -739,6 +841,7 @@ function formatChecklist() {
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} onImported={refreshImportedNotes} onRefresh={refreshFromServer} />}
       {refreshOpen && <Refresh onClose={() => setRefreshOpen(false)} onRefresh={refreshFromServer} />}
       {exportTarget && <Export title={exportTarget.title} onClose={() => setExportTarget(null)} onExport={() => exportNote(exportTarget.id)} />}
+      {backupOpen && <Backup onClose={() => setBackupOpen(false)} onBackup={backupLocalData} onRestore={restoreLocalBackup} />}
       {importMarkdownOpen && <ImportMarkdown onClose={() => setImportMarkdownOpen(false)} onImport={importMarkdown} />}
       {conflictsOpen && <Conflicts onClose={() => setConflictsOpen(false)} onResolve={resolveConflict} />}
       {recoveryOpen && <Recovery onClose={() => setRecoveryOpen(false)} onRecover={recoverCreation} />}
@@ -761,7 +864,7 @@ function formatChecklist() {
             <button className="nav-item" onClick={() => setTrashOpen(true)}>🗑 Local Trash</button>
             <button
               className={`nav-item ${
-                selectedCategory === "All Notes" ? "active" : ""
+                !localChangesOnly && selectedCategory === "All Notes" ? "active" : ""
               }`}
               onClick={() => setSelectedCategory("All Notes")}
             >
@@ -772,7 +875,7 @@ function formatChecklist() {
 
             <button
               className={`nav-item ${
-                selectedCategory === "Favorites" ? "active" : ""
+                !localChangesOnly && selectedCategory === "Favorites" ? "active" : ""
               }`}
               onClick={() => setSelectedCategory("Favorites")}
             >
@@ -781,6 +884,10 @@ function formatChecklist() {
               <span className="nav-count">
                 {notes.filter((note) => note.favorite).length}
               </span>
+            </button>
+            <button className={`nav-item ${localChangesOnly ? "active" : ""}`} onClick={() => { setLocalChangesOnly(true); setSearch(""); }} title="Local-only notes, local edits, conflicts, and upload-recovery or unknown status. No server requests.">
+              <span>↥</span>Local changes
+              <span className="nav-count">{changesLoading ? "…" : changesError ? "?" : notes.filter(note => changedIds.has(note.id)).length}</span>
             </button>
           </nav>
 
@@ -791,7 +898,7 @@ function formatChecklist() {
               <button
                 key={category}
                 className={`nav-item ${
-                  selectedCategory === category ? "active" : ""
+                  !localChangesOnly && selectedCategory === category ? "active" : ""
                 }`}
                 onClick={() => setSelectedCategory(category)}
               >
@@ -815,11 +922,17 @@ function formatChecklist() {
         <section className="note-list">
           <div className="note-list-header">
             <div>
-              <h1>{selectedCategory}</h1>
-              <span>{filteredNotes.length} notes</span>
+              <h1>{localChangesOnly ? "Local changes" : selectedCategory}</h1>
+              <span>{localChangesOnly && changesLoading ? "Checking local changes…" : `${filteredNotes.length} notes`}</span>
             </div>
           </div>
 
+          {localChangesOnly && <div className="local-changes-help">
+            <p>Local-only notes and changes or sync issues needing review. Uploads still require individual confirmation.</p>
+            {saveError && <p role="status">Some edits need to be saved before upload.</p>}
+            {changesError && <p role="alert">Could not update this list. It may be incomplete. <button onClick={() => setChangesRetry(value => value + 1)}>Retry</button></p>}
+            {!changesLoading && !changesError && filteredNotes.length === 0 && <p role="status">{search ? "No local changes match this search." : "No local changes or sync issues found in saved local data. This is not a live server check."}</p>}
+          </div>}
           <div className="search-box">
             <span>⌕</span>
 
@@ -872,6 +985,7 @@ function formatChecklist() {
                   <span>{note.category}</span>
                   <span>{formatDate(note.modified_at)}</span>
                 </div>
+                {localChangesOnly && <div className="note-change-reason">{failedSaves.current.has(note.id) ? "Local save needs retry" : changesLoading ? "Checking status…" : localChangeLabel(changes.find(change => change.id === note.id)?.kind)}</div>}
               </button>
             ))}
           </div>
@@ -936,7 +1050,12 @@ function formatChecklist() {
                 </div>
               )}
 
-              <div className="formatting-toolbar" onMouseDown={(event) => event.preventDefault()}>
+              <div className="editor-mode" role="group" aria-label="Editor display mode">
+                <button aria-pressed={!previewMode} onClick={() => changeEditorMode(false)}>Edit</button>
+                <button aria-pressed={previewMode} onClick={() => changeEditorMode(true)}>Preview</button>
+                {previewMode && <span>Read-only text · links inactive · images not loaded</span>}
+              </div>
+              {!previewMode && <div className="formatting-toolbar" onMouseDown={(event) => event.preventDefault()}>
                 <button
                   title="Bold"
                   onClick={() => formatSelection("**")}><strong>B</strong></button>
@@ -1014,9 +1133,9 @@ function formatChecklist() {
                 >
                   &lt;/&gt;
                 </button>
-              </div>
+              </div>}
 
-              {pendingLink && (
+              {pendingLink && !previewMode && (
                 <form
                   className="link-editor"
                   onSubmit={(event) => {
@@ -1048,7 +1167,9 @@ function formatChecklist() {
                 </form>
               )}
 
-              <textarea
+              {previewMode ? <section key={selectedNote.id} className="markdown-preview" aria-label="Markdown preview" tabIndex={0}>
+                <PreviewBoundary key={selectedNote.id}><MarkdownPreview content={selectedNote.content} /></PreviewBoundary>
+              </section> : <textarea
                 ref={editorRef}
                 className="editor-content"
                 value={selectedNote.content}
@@ -1060,7 +1181,7 @@ function formatChecklist() {
                 }
                 onBlur={saveCurrentNote}
                 spellCheck={false}
-              />
+              />}
 
               <div className="editor-footer">
                 <NoteSyncStatus note={selectedNote} saving={pendingSaves > 0}

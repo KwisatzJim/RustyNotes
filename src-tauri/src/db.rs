@@ -13,7 +13,7 @@ pub struct Note {
     pub modified_at: i64,
 }
 
-fn database_path() -> PathBuf {
+pub(crate) fn database_path() -> PathBuf {
     // macOS keeps the existing ~/Library/Application Support location.
     // Linux uses XDG_DATA_HOME, falling back to ~/.local/share.
     let data_dir = dirs::data_local_dir().expect("Could not determine application data directory");

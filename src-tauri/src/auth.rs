@@ -13,6 +13,13 @@ const BODY_LIMIT: usize = 64 * 1024;
 pub struct LoginState(Mutex<Option<LoginSession>>);
 
 impl LoginState {
+    pub(crate) async fn restore_backup(&self, prepared: crate::backup_preview::PreparedBackup) -> Result<String, String> {
+        // Serialize against the same lock used by server-writing workflows.
+        let guard = self.0.lock().await;
+        if guard.is_some() { return Err("Cancel the pending Nextcloud login in Settings before restoring.".into()); }
+        tauri::async_runtime::spawn_blocking(move || crate::restore::restore_prepared(&crate::db::database_path(), prepared))
+            .await.map_err(|_| "Restore outcome could not be confirmed. Reload local notes before continuing.".to_string())?
+    }
     pub(crate) async fn create_server_note(&self, id: i64) -> Result<(), String> {
         let guard = self.0.lock().await;
         if guard.is_some() { return Err("Finish or cancel login before uploading.".into()); }

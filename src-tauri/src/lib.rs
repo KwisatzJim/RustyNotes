@@ -15,11 +15,15 @@ mod markdown_import;
 mod recovery;
 mod sync_status;
 mod trash;
+mod backup;
+mod backup_preview;
+mod restore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(auth::LoginState::default())
+        .manage(backup_preview::PreviewState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -45,11 +49,16 @@ pub fn run() {
             create_remote::is_local_only_note,
             create_remote::create_server_note,
             export::export_note,
+            backup::backup_local_data,
+            backup::open_local_data_folder,
+            backup_preview::preview_local_backup,
+            restore::restore_local_backup,
             markdown_import::import_markdown,
             recovery::list_creation_recoveries,
             recovery::get_creation_recovery,
             recovery::recover_creation,
             sync_status::get_note_sync_status,
+            sync_status::list_local_changes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

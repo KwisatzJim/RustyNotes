@@ -16,9 +16,13 @@ an automatic background service.
 
 - Offline note creation, editing, and persistence across restarts.
 - Plain Markdown editing with formatting controls, including links and lists.
+- Read-only Markdown preview with headings, tables, code blocks, and task lists.
 - Search, categories, and favorites.
+- A **Local changes** sidebar filter for local-only notes, edits, conflicts, and uncertain or unknown sync status.
+- Light and dark themes with a remembered top-toolbar toggle.
 - Markdown file import and export using native file dialogs.
 - Local Trash with confirmation and restore; it does not delete server notes.
+- Verified local database backups, read-only preview, and explicitly confirmed restore with a safety backup.
 - Nextcloud Login Flow v2 and the official Nextcloud Notes API.
 - Read-only connection checks, initial import, and download-only Refresh.
 - Explicit upload of one selected note, including creation of a new server note.
@@ -27,6 +31,26 @@ an automatic background service.
 
 Note bodies are plain Markdown **stored in a local SQLite database**, not a
 folder of `.md` files. Use Markdown export when you want a standalone file.
+
+## Markdown preview
+
+Use **Preview** above the editor to see formatted Markdown, then **Edit** to
+return to the original text. Switching modes does not alter the Markdown or
+upload it. New notes open in Edit mode.
+
+Preview supports tables, task lists, and strikethrough as well as basic Markdown.
+Raw HTML is disabled, links are inactive, and images appear as labeled
+placeholders: preview does not fetch external content. Task checkboxes are
+read-only. Notes over 100,000 characters remain editable but cannot be previewed.
+
+## Appearance
+
+Use the **Dark** (moon) or **Light** (sun) button in the top toolbar to switch
+themes. On first launch, the app uses your system preference; your explicit
+choice is then remembered locally between launches. The setting is specific
+to this installation's webview storage, not synced to Nextcloud or included in
+SQLite backups. Native file pickers and operating-system window decorations
+still follow the operating system's appearance.
 
 ## How Nextcloud synchronization works
 
@@ -151,7 +175,37 @@ Icon and metadata changes require rebuilding and replacing the old package.
   (the default is `~/.local/share/RustyNotes/rustynotes.db`).
 - Credentials: macOS Keychain or Linux Secret Service, separate from the database.
 
-For a database backup, fully quit RustyNotes and copy its entire `RustyNotes`
+Use **Back up local data…** in the top toolbar, then **Choose backup destination…**.
+The app waits for pending saves and creates a consistent, verified `.sqlite3`
+snapshot including notes, Trash, settings, saved conflicts, and sync history.
+Choose a new filename outside the live data folder; existing files are not replaced.
+The backup is **not encrypted** and excludes keyring credentials. Keep it private.
+In the same dialog, **Preview backup…** opens an existing `.sqlite3` backup
+(up to 128 MiB), checks database integrity and the expected table structure,
+and shows note and Trash counts. It inspects a private temporary copy, not the
+live database, and does not display note contents. Files with live SQLite
+companion files or an unsupported schema are rejected. Preview never changes your
+current data or Nextcloud server.
+
+To restore, preview the backup, read the replacement warning, check the confirmation
+box, and choose **Restore this backup**. Close other RustyNotes copies using the same
+data first. Restore waits for queued saves, refuses failed saves or an active login,
+and revalidates the file. If its bytes changed after preview, a new preview is required.
+It creates and verifies a safety backup before replacing local rows in one SQLite
+transaction. Failed row replacement rolls back; the safety backup remains available.
+Notes, Trash, settings, and sync history are replaced, not merged. Nothing is uploaded
+or deleted on Nextcloud, and keyring credentials are unchanged.
+
+The result shows the safety backup path, in a `before-restore-*` folder alongside
+`rustynotes.db`. These backups are private, unencrypted, and not automatically removed.
+Use **Open data folder** in the backup-and-restore dialog to find them in Finder
+or your Linux file manager without navigating hidden folders. Do not move or edit
+the live `rustynotes.db` file.
+They can be previewed and restored through the same workflow. After restoring, review
+your server address and Refresh before uploading old local versions. Restore reloads
+the editor from SQLite; if reloading fails, editing is paused until you reload.
+
+For a manual backup instead, fully quit RustyNotes and copy its entire `RustyNotes`
 data directory. Markdown exports contain the note text, not categories, favorites,
 server associations, or conflict history. A database backup does not back up
 the separate credential store.

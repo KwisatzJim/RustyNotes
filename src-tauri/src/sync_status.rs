@@ -24,6 +24,10 @@ fn read(db: &mut Connection, id: i64) -> Result<Status, String> {
     let tx = db
         .transaction()
         .map_err(|_| "Could not read sync status.".to_string())?;
+    read_snapshot(&tx, id)
+}
+
+fn read_snapshot(tx: &Connection, id: i64) -> Result<Status, String> {
     let (title, content, category, favorite): (String, String, String, bool) = tx
         .query_row(
             "SELECT title,content,category,favorite FROM notes WHERE id=?1",
@@ -79,6 +83,41 @@ fn read(db: &mut Connection, id: i64) -> Result<Status, String> {
         account: Some(account),
     })
 }
+
+#[derive(Serialize)]
+pub struct LocalChange {
+    id: i64,
+    // Unknown status must not silently hide a note that needs review.
+    kind: Option<Kind>,
+}
+
+fn local_changes(db: &mut Connection) -> Result<Vec<LocalChange>, String> {
+    let tx = db
+        .transaction()
+        .map_err(|_| "Could not read local changes.")?;
+    let ids: Vec<i64> = tx
+        .prepare("SELECT id FROM notes ORDER BY id")
+        .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
+        .map_err(|_| "Could not list local notes.")?;
+    let mut result = Vec::new();
+    for id in ids {
+        let kind = read_snapshot(&tx, id).ok().map(|s| s.kind);
+        if kind != Some(Kind::MatchesSnapshot) {
+            result.push(LocalChange { id, kind });
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn list_local_changes() -> Result<Vec<LocalChange>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut db = crate::db::open_database().map_err(|_| "Could not open local storage.")?;
+        local_changes(&mut db)
+    })
+    .await
+    .map_err(|_| "Could not check local changes.".to_string())?
+}
 #[tauri::command]
 pub fn get_note_sync_status(id: i64) -> Result<Status, String> {
     let mut db =
@@ -89,6 +128,53 @@ pub fn get_note_sync_status(id: i64) -> Result<Status, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn filter_includes_local_edits_and_unknowns_but_not_matching_or_trashed_notes() {
+        let mut db = setup();
+        assert!(local_changes(&mut db).unwrap().is_empty());
+        db.execute(
+            "INSERT INTO notes(title,content,modified_at) VALUES('new','text',1)",
+            [],
+        )
+        .unwrap();
+        let changes = local_changes(&mut db).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, 2);
+        assert_eq!(changes[0].kind, Some(Kind::LocalOnly));
+        db.execute("UPDATE notes SET favorite=1 WHERE id=1", [])
+            .unwrap();
+        assert_eq!(
+            local_changes(&mut db).unwrap()[0].kind,
+            Some(Kind::LocalChanges)
+        );
+        db.execute("UPDATE imported_notes SET original_snapshot='broken'", [])
+            .unwrap();
+        assert_eq!(local_changes(&mut db).unwrap()[0].kind, None);
+        db.execute_batch("INSERT INTO trashed_notes SELECT * FROM notes WHERE id=2; DELETE FROM notes WHERE id=2;").unwrap();
+        assert_eq!(local_changes(&mut db).unwrap().len(), 1);
+    }
+    #[test]
+    fn filter_includes_conflicts_and_interrupted_uploads() {
+        let mut db = setup();
+        db.execute("UPDATE notes SET content='local'", []).unwrap();
+        let mut server = remote();
+        server.content = "server".into();
+        crate::refresh::store_refresh(&mut db, "https://cloud/", "jim", &[server]).unwrap();
+        assert_eq!(
+            local_changes(&mut db).unwrap()[0].kind,
+            Some(Kind::ConflictSaved)
+        );
+        db.execute(
+            "INSERT INTO notes(title,content,modified_at) VALUES('new','text',1)",
+            [],
+        )
+        .unwrap();
+        crate::create_remote::begin(&mut db, "https://cloud/", "jim", 2).unwrap();
+        assert_eq!(
+            local_changes(&mut db).unwrap()[1].kind,
+            Some(Kind::RecoveryNeeded)
+        );
+    }
     fn remote() -> RemoteNote {
         RemoteNote {
             id: 7,
