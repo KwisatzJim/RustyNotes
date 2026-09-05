@@ -166,8 +166,9 @@ npm run tauri build -- --bundles app
 ```
 
 Output: `src-tauri/target/release/bundle/macos/`. This does not establish Developer ID
-signing or notarization. Public distribution, complete third-party license review,
-and AppStream metadata remain release-preparation work.
+signing or notarization. The locked source dependencies have been reviewed in
+[LICENSE_AUDIT.md](LICENSE_AUDIT.md); final binary notice generation, an Ubuntu
+AppImage library audit, and AppStream metadata remain release-preparation work.
 
 The custom notebook icon is generated from [an editable SVG](src-tauri/icons/source.svg).
 Icon and metadata changes require rebuilding and replacing the old package.

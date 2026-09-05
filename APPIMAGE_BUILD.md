@@ -5,6 +5,19 @@ The equivalent command is `node scripts/build-appimage.mjs`.
 The script can also be copied separately and run by absolute path while the
 current directory is the project root.
 
+After a successful build on Ubuntu, audit the libraries and copyright notices
+inside that exact AppDir:
+
+```bash
+npm run audit:appimage
+```
+
+The audit matches each bundled ELF library to an installed Debian package by
+its build ID, then requires that package's byte-identical copyright file inside
+the AppDir. It writes `appimage-license-audit.txt` beside the AppImage and exits
+with an error if any library cannot be proven. Do not distribute an image with
+unresolved entries.
+
 ## Ubuntu copyright lookup fallback
 
 The Ubuntu build reported missing copyright files for libraries queried under
@@ -56,8 +69,10 @@ verified byte-for-byte in the AppDir. The user also compared the bundled libench
 notice with its system copy after a warning about the copied library; they matched.
 That rebuilt image passed launch and Notes connection checks on all three Linux
 systems, with Refresh confirmed on Ubuntu and Pop_OS. Remaining warnings and
-third-party licensing still need review before public distribution; the notice
-checks are not a complete license audit.
+the final bundled-library licensing inventory still needs review before public
+distribution; the notice checks are not a complete AppImage license audit. The
+locked Rust and JavaScript source dependency review is recorded separately in
+[LICENSE_AUDIT.md](LICENSE_AUDIT.md).
 
 References:
 - https://github.com/linuxdeploy/linuxdeploy/blob/master/src/core/appdir.cpp

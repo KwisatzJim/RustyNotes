@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:appimage": "node scripts/build-appimage.mjs",
+    "audit:appimage": "node scripts/audit-appimage-licenses.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
