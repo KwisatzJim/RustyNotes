@@ -5,17 +5,20 @@ The equivalent command is `node scripts/build-appimage.mjs`.
 The script can also be copied separately and run by absolute path while the
 current directory is the project root.
 
-After a successful build on Ubuntu, audit the libraries and copyright notices
-inside that exact AppDir:
+The wrapper matches every bundled ELF library to an installed Ubuntu package by
+its build ID. It copies any missing package copyright notices into the AppDir,
+verifies the copies byte-for-byte, repacks the AppImage without rerunning the GTK
+deployment plugin, and then runs the complete audit automatically. The original
+pre-notice AppImage is preserved if that final repack fails.
+
+You can repeat the read-only audit after a successful build:
 
 ```bash
 npm run audit:appimage
 ```
 
-The audit matches each bundled ELF library to an installed Debian package by
-its build ID, then requires that package's byte-identical copyright file inside
-the AppDir. It writes `appimage-license-audit.txt` beside the AppImage and exits
-with an error if any library cannot be proven. Do not distribute an image with
+The audit writes `appimage-license-audit.txt` beside the AppImage and exits with
+an error if any library cannot be proven. Do not distribute an image with
 unresolved entries.
 
 ## Ubuntu copyright lookup fallback
@@ -31,8 +34,9 @@ commands, and tool errors are left unchanged. No system tools are modified.
 The helper uses `/usr/bin/dpkg-query` and records recovered notice paths.
 After packaging, the script verifies those notices exist in the AppDir and
 match the installed notice bytes. The temporary helper is removed afterward.
-Unresolved upstream warnings are not suppressed. This is not a complete
-third-party license audit or a redistribution-readiness guarantee.
+Unresolved upstream warnings are not suppressed. The build's final build-ID
+inventory is the complete bundled ELF-library notice check; it does not replace
+review of non-library assets or other redistribution requirements.
 
 ## Wayland compatibility
 
@@ -68,10 +72,9 @@ The copyright lookup fallback passed an Ubuntu build with 115 recovered notices
 verified byte-for-byte in the AppDir. The user also compared the bundled libenchant
 notice with its system copy after a warning about the copied library; they matched.
 That rebuilt image passed launch and Notes connection checks on all three Linux
-systems, with Refresh confirmed on Ubuntu and Pop_OS. Remaining warnings and
-the final bundled-library licensing inventory still needs review before public
-distribution; the notice checks are not a complete AppImage license audit. The
-locked Rust and JavaScript source dependency review is recorded separately in
+systems, with Refresh confirmed on Ubuntu and Pop_OS. The current wrapper now
+fails closed unless the final bundled-library notice inventory has zero unresolved
+entries. The locked Rust and JavaScript source dependency review is recorded separately in
 [LICENSE_AUDIT.md](LICENSE_AUDIT.md).
 
 References:

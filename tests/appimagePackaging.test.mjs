@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync, readdirSync, existsSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { packagingEnvironment, verifyAppDir, repackWithoutWayland, queryWithLibraryAliases, noticeForQuery, verifyRecoveredNotices } from '../scripts/build-appimage.mjs';
+import { packagingEnvironment, verifyAppDir, repackWithoutWayland, repackWithPackagedNotices, queryWithLibraryAliases, noticeForQuery, verifyRecoveredNotices } from '../scripts/build-appimage.mjs';
 
 test('copyright lookup retries the equivalent usr library path', () => {
   const original = '/lib/x86_64-linux-gnu/librsvg-2.so.2';
@@ -173,4 +173,33 @@ test('repack reports failed command and missing output', t => {
 
 test('clean AppDir does not invoke repacking', t => {
   repackWithoutWayland({ directory: fixture(t), run() { assert.fail('unexpected repack'); } });
+});
+
+test('license repack preserves the previous image and does not rerun GTK deployment', t => {
+  const f = repackFixture(t);
+  rmSync(join(f.directory, 'usr/lib/libwayland-client.so.0'));
+  rmSync(join(f.directory, 'usr/lib/libwayland-client.so.0.22.0'));
+  repackWithPackagedNotices({ ...f, run(tool, args, options) {
+    assert.equal(tool, f.tool);
+    assert.ok(args.includes('--output'));
+    assert.ok(!args.includes('--plugin'));
+    assert.equal(options.env.OUTPUT, f.image);
+    assert.ok(!existsSync(f.image));
+    writeFileSync(f.image, 'licensed image');
+    return { status: 0 };
+  } });
+  const backup = join(f.root, readdirSync(f.root).find(name => name.startsWith('appimage-pre-license-backup-')));
+  assert.equal(readFileSync(join(backup, 'test.AppImage'), 'utf8'), 'original image');
+  assert.equal(readFileSync(f.image, 'utf8'), 'licensed image');
+});
+
+test('license repack fails closed on a failed command or missing output', t => {
+  const first = repackFixture(t);
+  rmSync(join(first.directory, 'usr/lib/libwayland-client.so.0'));
+  rmSync(join(first.directory, 'usr/lib/libwayland-client.so.0.22.0'));
+  assert.throws(() => repackWithPackagedNotices({ ...first, run: () => ({ status: 1 }) }), /License repack failed/);
+  const second = repackFixture(t);
+  rmSync(join(second.directory, 'usr/lib/libwayland-client.so.0'));
+  rmSync(join(second.directory, 'usr/lib/libwayland-client.so.0.22.0'));
+  assert.throws(() => repackWithPackagedNotices({ ...second, run: () => ({ status: 0 }) }), /did not produce/);
 });

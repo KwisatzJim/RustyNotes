@@ -155,7 +155,9 @@ npm run build:appimage
 
 Output: `src-tauri/target/release/bundle/appimage/`. Do not substitute the plain
 Tauri AppImage command: the wrapper preserves the tested Wayland-library fix
-and verifies recovered copyright notices. See [AppImage build details](APPIMAGE_BUILD.md).
+and verifies a byte-identical Ubuntu package notice for every bundled ELF
+library, adding and repacking missing notices when needed. See
+[AppImage build details](APPIMAGE_BUILD.md).
 The host must provide `libwayland-client.so.0`; the tested image does not need
 an `LD_PRELOAD` workaround.
 

@@ -1,5 +1,5 @@
 // Run on the Ubuntu machine that built the AppImage, from the project root.
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -65,23 +65,75 @@ function matchingPackages(library) {
   return { id, packages: [...new Set(packages)] };
 }
 
-export function auditAppDir(appDir) {
+function inspectAppDir(appDir) {
   const libDir = join(appDir, 'usr', 'lib');
   if (!lstatSync(libDir).isDirectory()) throw new Error(`Missing AppDir library folder: ${libDir}`);
+  return libraries(libDir).map(library => {
+    const match = matchingPackages(library);
+    return {
+      relativeLibrary: relative(appDir, library.displayed),
+      buildId: match.id,
+      packages: match.packages,
+    };
+  });
+}
+
+export function missingNoticePlan(entries, noticeExists = existsSync) {
+  const packages = new Set();
+  const unresolved = [];
+  for (const entry of entries) {
+    const packageName = entry.packages.find(candidate => noticeExists(`/usr/share/doc/${candidate}/copyright`));
+    if (packageName) packages.add(packageName);
+    else unresolved.push(`${entry.relativeLibrary}\t${entry.packages.join(',') || 'no matching installed package'}\t${entry.buildId || 'no build ID'}`);
+  }
+  return { packages: [...packages].sort(), unresolved };
+}
+
+export function installMissingNotices(appDir) {
+  const plan = missingNoticePlan(inspectAppDir(appDir));
+  if (plan.unresolved.length) {
+    throw new Error(`Cannot package complete library notices:\n${plan.unresolved.join('\n')}`);
+  }
+  const copied = [];
+  for (const packageName of plan.packages) {
+    const source = `/usr/share/doc/${packageName}/copyright`;
+    const destination = join(appDir, 'usr', 'share', 'doc', packageName, 'copyright');
+    if (existsSync(destination)) {
+      if (!readFileSync(source).equals(readFileSync(destination))) {
+        throw new Error(`Bundled copyright notice differs: ${source}`);
+      }
+      continue;
+    }
+    mkdirSync(join(appDir, 'usr', 'share', 'doc', packageName), { recursive: true });
+    copyFileSync(source, destination);
+    if (!readFileSync(source).equals(readFileSync(destination))) {
+      throw new Error(`Copied copyright notice differs: ${source}`);
+    }
+    copied.push(packageName);
+  }
+  return copied;
+}
+
+export function auditAppDir(appDir) {
   const verified = [];
   const unresolved = [];
-  for (const library of libraries(libDir)) {
-    const match = matchingPackages(library);
-    const relativeLibrary = relative(appDir, library.displayed);
-    const accepted = match.packages.find(packageName => {
+  for (const entry of inspectAppDir(appDir)) {
+    const accepted = entry.packages.find(packageName => {
       const installed = `/usr/share/doc/${packageName}/copyright`;
       const bundled = join(appDir, 'usr', 'share', 'doc', packageName, 'copyright');
       try { return readFileSync(installed).equals(readFileSync(bundled)); } catch { return false; }
     });
-    if (accepted) verified.push(`${relativeLibrary}\t${accepted}\t${match.id}`);
-    else unresolved.push(`${relativeLibrary}\t${match.packages.join(',') || 'no matching installed package'}\t${match.id || 'no build ID'}`);
+    if (accepted) verified.push(`${entry.relativeLibrary}\t${accepted}\t${entry.buildId}`);
+    else unresolved.push(`${entry.relativeLibrary}\t${entry.packages.join(',') || 'no matching installed package'}\t${entry.buildId || 'no build ID'}`);
   }
   return { verified, unresolved };
+}
+
+export function writeAuditReport(output, appDir, audit) {
+  const report = [`AppImage license audit`, `AppDir: ${appDir}`, `Verified libraries: ${audit.verified.length}`, `Unresolved libraries: ${audit.unresolved.length}`, '', '[verified]', ...audit.verified, '', '[unresolved]', ...audit.unresolved, ''].join('\n');
+  const reportPath = join(output, 'appimage-license-audit.txt');
+  writeFileSync(reportPath, report);
+  return { report, reportPath };
 }
 
 function main() {
@@ -94,9 +146,7 @@ function main() {
   if (appDirs.length !== 1) throw new Error('Expected exactly one generated AppDir. Build the AppImage first.');
   const appDir = join(output, appDirs[0].name);
   const audit = auditAppDir(appDir);
-  const report = [`AppImage license audit`, `AppDir: ${appDir}`, `Verified libraries: ${audit.verified.length}`, `Unresolved libraries: ${audit.unresolved.length}`, '', '[verified]', ...audit.verified, '', '[unresolved]', ...audit.unresolved, ''].join('\n');
-  const reportPath = join(output, 'appimage-license-audit.txt');
-  writeFileSync(reportPath, report);
+  const { report, reportPath } = writeAuditReport(output, appDir, audit);
   console.log(report);
   console.log(`Audit report: ${reportPath}`);
   if (audit.unresolved.length) throw new Error('AppImage license audit is incomplete. Review every unresolved library before distribution.');

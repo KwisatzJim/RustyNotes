@@ -5,6 +5,7 @@ import { readdirSync, existsSync, readFileSync, lstatSync, mkdtempSync, mkdirSyn
 import { resolve, join, dirname, basename, relative } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { auditAppDir, installMissingNotices, writeAuditReport } from './audit-appimage-licenses.mjs';
 
 export function queryWithLibraryAliases(args, query, canonical = realpathSync) {
   const original = query(args);
@@ -133,6 +134,28 @@ export function repackWithoutWayland({ directory, image, tool, arch, env, run = 
   }
 }
 
+export function repackWithPackagedNotices({ directory, image, tool, arch, env, run = spawnSync }) {
+  verifyAppDir(directory);
+  if (!existsSync(tool)) throw new Error(`Cannot find cached linuxdeploy: ${tool}`);
+  if (!lstatSync(image).isFile()) throw new Error('Expected an ordinary AppImage output file.');
+  // Keep the pre-notice AppImage recoverable if linuxdeploy cannot repack the AppDir.
+  const backup = mkdtempSync(join(dirname(dirname(directory)), 'appimage-pre-license-backup-'));
+  renameSync(image, join(backup, basename(image)));
+  console.log(`Pre-license AppImage preserved in: ${backup}`);
+  // GTK and its dependencies are already deployed. Only rerun the AppImage output step.
+  const result = run(tool, ['--appimage-extract-and-run', '--appdir', directory,
+    '--exclude-library=libwayland-client.so*', '--output', 'appimage'], {
+    cwd: dirname(directory), stdio: 'inherit',
+    env: { ...packagingEnvironment(env), OUTPUT: image, ARCH: arch, APPIMAGE_EXTRACT_AND_RUN: '1' },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`License repack failed (${result.signal || result.status}). Previous AppImage preserved in ${backup}.`);
+  verifyAppDir(directory);
+  if (!existsSync(image) || !lstatSync(image).isFile() || lstatSync(image).size === 0) {
+    throw new Error(`License repack did not produce an AppImage. Previous AppImage preserved in ${backup}.`);
+  }
+}
+
 function build(root, buildEnv) {
   // Use a known output directory so we inspect the build we just requested.
   const result = spawnSync('npm', ['run', 'tauri', 'build', '--', '--bundles', 'appimage'], {
@@ -153,12 +176,25 @@ function build(root, buildEnv) {
   const arch = { x64: 'x86_64', arm64: 'aarch64', arm: 'armhf', ia32: 'i386' }[process.arch];
   if (!arch) throw new Error(`Unsupported build architecture: ${process.arch}`);
   const cache = process.env.XDG_CACHE_HOME || join(homedir(), '.cache');
+  const tool = join(cache, 'tauri', `linuxdeploy-${arch}.AppImage`);
   repackWithoutWayland({ directory, image, arch, env: buildEnv,
-    tool: join(cache, 'tauri', `linuxdeploy-${arch}.AppImage`) });
+    tool });
   verifyAppDir(directory);
   const notices = readFileSync(buildEnv.RUSTYNOTES_COPYRIGHT_LOG, 'utf8').split('\n').filter(Boolean);
   verifyRecoveredNotices(directory, notices);
   console.log(`Verified recovered copyright notices in AppDir: ${new Set(notices).size}.`);
+  const copiedNotices = installMissingNotices(directory);
+  if (copiedNotices.length) {
+    console.log(`Added ${copiedNotices.length} missing package copyright notice(s) to the AppDir.`);
+    repackWithPackagedNotices({ directory, image, tool, arch, env: buildEnv });
+  }
+  const audit = auditAppDir(directory);
+  const { reportPath } = writeAuditReport(output, directory, audit);
+  if (audit.unresolved.length) {
+    throw new Error(`AppImage license audit is incomplete. Review ${reportPath} before distribution.`);
+  }
+  console.log(`Verified AppImage library notices: ${audit.verified.length}; unresolved: 0.`);
+  console.log(`License audit report: ${reportPath}`);
   console.log('Verified generated AppDir: no bundled libwayland-client.');
   console.log(`AppImage ready for normal-launch testing: ${join(output, images[0].name)}`);
 }
