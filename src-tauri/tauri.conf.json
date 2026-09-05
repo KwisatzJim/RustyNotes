@@ -46,6 +46,9 @@
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "targets": "all",
     "publisher": "Jim Kelley",
     "homepage": "https://github.com/KwisatzJim/RustyNotes",
