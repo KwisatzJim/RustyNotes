@@ -63,7 +63,14 @@ fn replace_with_backup(
         .tempdir_in(parent)
         .map_err(|_| "Could not create a safety backup folder. Nothing was restored.")?;
     let safety = folder.path().join("RustyNotes-safety.sqlite3");
-    save(live, &safety)?;
+    if let Err(error) = save(live, &safety) {
+        // Publication may succeed before the folder flush fails. Retain that
+        // file at the reported path, while still refusing to restore.
+        if safety.exists() {
+            let _retained = folder.keep();
+        }
+        return Err(error);
+    }
     let _retained = folder.keep();
     #[cfg(unix)]
     for directory in [safety.parent().unwrap(), parent] {
@@ -200,6 +207,24 @@ mod tests {
         assert!(replace_with_backup(&live, &source, |_, _| Err("disk full".into())).is_err());
         assert_eq!(title(&live), "current");
     }
+    #[test]
+    fn published_safety_backup_is_retained_when_durability_check_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("live.db");
+        let backup = dir.path().join("backup.sqlite3");
+        fixture(&live, "current");
+        fixture(&backup, "old");
+        let source = Connection::open(&backup).unwrap();
+        let mut saved_path = None;
+        assert!(replace_with_backup(&live, &source, |from, to| {
+            crate::backup::write_backup(from, to)?;
+            saved_path = Some(to.to_path_buf());
+            Err("simulated durability failure".into())
+        }).is_err());
+        assert_eq!(title(&live), "current");
+        assert_eq!(title(&saved_path.unwrap()), "current");
+    }
+
     #[test]
     fn wal_restore_preserves_metadata_and_safety_copy_can_undo_it() {
         let dir = tempfile::tempdir().unwrap();

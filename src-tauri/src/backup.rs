@@ -117,9 +117,36 @@ pub(super) fn write_backup(source_path: &Path, destination: &Path) -> Result<(),
     temp.as_file()
         .sync_all()
         .map_err(|_| "Could not finish writing the backup.")?;
+    publish_backup(temp, &destination, &parent, sync_directory)
+}
+
+fn sync_directory(directory: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(directory)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        Ok(())
+    }
+}
+
+fn publish_backup(
+    temp: tempfile::NamedTempFile,
+    destination: &Path,
+    parent: &Path,
+    sync: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), String> {
     temp.persist_noclobber(destination).map_err(|_| {
         "Could not save backup. Choose a new filename and check permissions and space."
     })?;
+    // The file was flushed before publication; now flush its new directory
+    // entry too. On failure retain the file, but do not report durable success.
+    sync(parent).map_err(|_| format!(
+        "Backup file was saved, but folder durability could not be confirmed. Keep the file and check the destination before retrying with a new filename. Backup location: {}",
+        destination.display()
+    ))?;
     Ok(())
 }
 
@@ -158,6 +185,35 @@ pub async fn backup_local_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn publication_syncs_folder_after_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("backup.sqlite3");
+        let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        std::fs::write(temp.path(), b"verified backup").unwrap();
+        publish_backup(temp, &destination, dir.path(), |parent| {
+            assert_eq!(parent, dir.path());
+            assert_eq!(std::fs::read(&destination).unwrap(), b"verified backup");
+            sync_directory(parent)
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn folder_sync_failure_retains_backup_and_reports_uncertainty() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("backup.sqlite3");
+        let temp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        std::fs::write(temp.path(), b"verified backup").unwrap();
+        let error = publish_backup(temp, &destination, dir.path(), |_| {
+            Err(std::io::Error::other("simulated folder sync failure"))
+        })
+        .unwrap_err();
+        assert!(error.contains("durability could not be confirmed"));
+        assert!(error.contains(destination.to_str().unwrap()));
+        assert_eq!(std::fs::read(destination).unwrap(), b"verified backup");
+    }
+
     #[test]
     fn folder_shortcut_uses_database_parent_without_creating_missing_folders() {
         let dir = tempfile::tempdir().unwrap();
