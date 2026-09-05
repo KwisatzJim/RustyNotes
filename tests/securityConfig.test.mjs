@@ -26,6 +26,11 @@ test("application metadata contains RustyNotes branding instead of starter label
   assert.doesNotThrow(() => readFileSync(new URL("../public/rustynotes.svg", import.meta.url)));
 });
 
+test("bundle identifier does not end with a platform bundle extension", () => {
+  assert.equal(config.identifier, "com.rustynotes.desktop");
+  assert.doesNotMatch(config.identifier, /\.(?:app|exe|deb|rpm|appimage)$/i);
+});
+
 test("production CSP permits Tauri IPC without remote web or websocket access", () => {
   assert.equal(production["default-src"], "'self'");
   assert.equal(production["connect-src"], "ipc: http://ipc.localhost");
