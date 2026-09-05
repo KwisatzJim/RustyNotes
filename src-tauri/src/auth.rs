@@ -13,30 +13,68 @@ const BODY_LIMIT: usize = 64 * 1024;
 pub struct LoginState(Mutex<Option<LoginSession>>);
 
 impl LoginState {
-    pub(crate) async fn restore_backup(&self, prepared: crate::backup_preview::PreparedBackup) -> Result<String, String> {
+    pub(crate) async fn restore_backup(
+        &self,
+        prepared: crate::backup_preview::PreparedBackup,
+    ) -> Result<String, String> {
         // Serialize against the same lock used by server-writing workflows.
         let guard = self.0.lock().await;
-        if guard.is_some() { return Err("Cancel the pending Nextcloud login in Settings before restoring.".into()); }
-        tauri::async_runtime::spawn_blocking(move || crate::restore::restore_prepared(&crate::db::database_path(), prepared))
-            .await.map_err(|_| "Restore outcome could not be confirmed. Reload local notes before continuing.".to_string())?
+        if guard.is_some() {
+            return Err("Cancel the pending Nextcloud login in Settings before restoring.".into());
+        }
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::restore::restore_prepared(&crate::db::database_path(), prepared)
+        })
+        .await
+        .map_err(|_| {
+            "Restore outcome could not be confirmed. Reload local notes before continuing."
+                .to_string()
+        })?
     }
     pub(crate) async fn create_server_note(&self, id: i64) -> Result<(), String> {
         let guard = self.0.lock().await;
-        if guard.is_some() { return Err("Finish or cancel login before uploading.".into()); }
-        let server = crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
-        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server)).await
-            .map_err(|_| "Could not read credential storage.".to_string())??.ok_or("Please authorize first.")?;
-        let client=client()?;
+        if guard.is_some() {
+            return Err("Finish or cancel login before uploading.".into());
+        }
+        let server =
+            crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
+        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server))
+            .await
+            .map_err(|_| "Could not read credential storage.".to_string())??
+            .ok_or("Please authorize first.")?;
+        let client = client()?;
         // Authenticate before persisting an attempt. This check cannot create notes.
-        let check=crate::notes_api::check_request(client.clone(), &credentials.server, &credentials.login_name, &credentials.app_password)?.send().await
-            .map_err(|_| "Could not reach Nextcloud. No new-note upload was attempted.".to_string())?;
-        if check.status()!=StatusCode::OK { return Err(format!("Nextcloud check returned HTTP {}. No new-note upload was attempted.",check.status().as_u16())); }
-        let (server,account)=(credentials.server.clone(),credentials.login_name.clone());
-        let note=tokio::task::spawn_blocking(move || {
-            let mut db=crate::db::open_database().map_err(|_| "Could not open local storage.".to_string())?;
-            crate::create_remote::begin(&mut db,&server,&account,id)
-        }).await.map_err(|_| "Could not prepare new-note upload.".to_string())??;
-        let remote=crate::create_remote::send(client,&credentials.server,&credentials.login_name,&credentials.app_password,&note).await?;
+        let check = crate::notes_api::check_request(
+            client.clone(),
+            &credentials.server,
+            &credentials.login_name,
+            &credentials.app_password,
+        )?
+        .send()
+        .await
+        .map_err(|_| "Could not reach Nextcloud. No new-note upload was attempted.".to_string())?;
+        if check.status() != StatusCode::OK {
+            return Err(format!(
+                "Nextcloud check returned HTTP {}. No new-note upload was attempted.",
+                check.status().as_u16()
+            ));
+        }
+        let (server, account) = (credentials.server.clone(), credentials.login_name.clone());
+        let note = tokio::task::spawn_blocking(move || {
+            let mut db = crate::db::open_database()
+                .map_err(|_| "Could not open local storage.".to_string())?;
+            crate::create_remote::begin(&mut db, &server, &account, id)
+        })
+        .await
+        .map_err(|_| "Could not prepare new-note upload.".to_string())??;
+        let remote = crate::create_remote::send(
+            client,
+            &credentials.server,
+            &credentials.login_name,
+            &credentials.app_password,
+            &note,
+        )
+        .await?;
         tokio::task::spawn_blocking(move || {
             let mut db=crate::db::open_database().map_err(|_| "Server creation succeeded but local confirmation failed. Check Nextcloud and refresh; do not create another copy.".to_string())?;
             crate::create_remote::finish(&mut db,&credentials.server,&credentials.login_name,&note,&remote)
@@ -45,16 +83,31 @@ impl LoginState {
 
     pub(crate) async fn upload_note(&self, id: i64) -> Result<(), String> {
         let guard = self.0.lock().await;
-        if guard.is_some() { return Err("Finish or cancel login before uploading.".into()); }
-        let server = crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
-        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server)).await
-            .map_err(|_| "Could not read credential storage.".to_string())??.ok_or("Please authorize first.")?;
+        if guard.is_some() {
+            return Err("Finish or cancel login before uploading.".into());
+        }
+        let server =
+            crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
+        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server))
+            .await
+            .map_err(|_| "Could not read credential storage.".to_string())??
+            .ok_or("Please authorize first.")?;
         let (server, account) = (credentials.server.clone(), credentials.login_name.clone());
         let pending = tokio::task::spawn_blocking(move || {
-            let db = crate::db::open_database().map_err(|_| "Could not open local storage.".to_string())?;
+            let db = crate::db::open_database()
+                .map_err(|_| "Could not open local storage.".to_string())?;
             crate::upload::prepare(&db, &server, &account, id)
-        }).await.map_err(|_| "Could not prepare upload.".to_string())??;
-        let remote = crate::upload::send(client()?, &credentials.server, &credentials.login_name, &credentials.app_password, &pending).await?;
+        })
+        .await
+        .map_err(|_| "Could not prepare upload.".to_string())??;
+        let remote = crate::upload::send(
+            client()?,
+            &credentials.server,
+            &credentials.login_name,
+            &credentials.app_password,
+            &pending,
+        )
+        .await?;
         tokio::task::spawn_blocking(move || {
             let mut db = crate::db::open_database().map_err(|_| "Server accepted the note, but local storage could not be opened. Refresh before retrying.".to_string())?;
             crate::upload::finish(&mut db, &credentials.server, &credentials.login_name, &pending, &remote)
@@ -63,35 +116,77 @@ impl LoginState {
 
     pub(crate) async fn refresh_notes(&self) -> Result<crate::refresh::RefreshSummary, String> {
         let guard = self.0.lock().await;
-        if guard.is_some() { return Err("Finish or cancel login before refreshing notes.".into()); }
-        let server = crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
-        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server)).await
+        if guard.is_some() {
+            return Err("Finish or cancel login before refreshing notes.".into());
+        }
+        let server =
+            crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
+        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server))
+            .await
             .map_err(|_| "Could not read credential storage.".to_string())??
             .ok_or("No saved credentials. Please authorize first.")?;
-        let notes = tokio::time::timeout(Duration::from_secs(120), crate::notes_api::download_notes(
-            client()?, &credentials.server, &credentials.login_name, &credentials.app_password,
-        )).await.map_err(|_| "Download timed out. No refresh changes were applied.".to_string())??;
+        let notes = tokio::time::timeout(
+            Duration::from_secs(120),
+            crate::notes_api::download_notes(
+                client()?,
+                &credentials.server,
+                &credentials.login_name,
+                &credentials.app_password,
+            ),
+        )
+        .await
+        .map_err(|_| "Download timed out. No refresh changes were applied.".to_string())??;
         tokio::task::spawn_blocking(move || {
-            let mut connection = crate::db::open_database().map_err(|_| "Could not open local storage for refresh.".to_string())?;
-            crate::refresh::store_refresh(&mut connection, &credentials.server, &credentials.login_name, &notes)
-        }).await.map_err(|_| "Refresh task failed. Restart to reload local notes before editing.".to_string())?
+            let mut connection = crate::db::open_database()
+                .map_err(|_| "Could not open local storage for refresh.".to_string())?;
+            crate::refresh::store_refresh(
+                &mut connection,
+                &credentials.server,
+                &credentials.login_name,
+                &notes,
+            )
+        })
+        .await
+        .map_err(|_| {
+            "Refresh task failed. Restart to reload local notes before editing.".to_string()
+        })?
     }
 
     pub(crate) async fn import_notes(&self) -> Result<crate::import::ImportSummary, String> {
         // Keep server changes, reauthorization and concurrent imports serialized.
         let guard = self.0.lock().await;
-        if guard.is_some() { return Err("Finish or cancel login before importing notes.".into()); }
-        let server = crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
-        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server)).await
+        if guard.is_some() {
+            return Err("Finish or cancel login before importing notes.".into());
+        }
+        let server =
+            crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
+        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server))
+            .await
             .map_err(|_| "Could not read credential storage.".to_string())??
             .ok_or("No saved credentials. Please authorize first.")?;
-        let notes = tokio::time::timeout(Duration::from_secs(120), crate::notes_api::download_notes(
-            client()?, &credentials.server, &credentials.login_name, &credentials.app_password,
-        )).await.map_err(|_| "Download timed out. Nothing was imported; please retry.".to_string())??;
+        let notes = tokio::time::timeout(
+            Duration::from_secs(120),
+            crate::notes_api::download_notes(
+                client()?,
+                &credentials.server,
+                &credentials.login_name,
+                &credentials.app_password,
+            ),
+        )
+        .await
+        .map_err(|_| "Download timed out. Nothing was imported; please retry.".to_string())??;
         tokio::task::spawn_blocking(move || {
-            let mut connection = crate::db::open_database().map_err(|_| "Could not open local storage for import.".to_string())?;
-            crate::import::store_batch(&mut connection, &credentials.server, &credentials.login_name, &notes)
-        }).await.map_err(|_| "Import task failed. Repeating the import is safe.".to_string())?
+            let mut connection = crate::db::open_database()
+                .map_err(|_| "Could not open local storage for import.".to_string())?;
+            crate::import::store_batch(
+                &mut connection,
+                &credentials.server,
+                &credentials.login_name,
+                &notes,
+            )
+        })
+        .await
+        .map_err(|_| "Import task failed. Repeating the import is safe.".to_string())?
     }
 
     pub(crate) async fn prepare_notes_check(&self) -> Result<reqwest::RequestBuilder, String> {
@@ -99,11 +194,18 @@ impl LoginState {
         if guard.is_some() {
             return Err("Finish or cancel login before checking the Notes API.".into());
         }
-        let server = crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
-        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server)).await
+        let server =
+            crate::settings::get_server_url()?.ok_or("Save and authorize your server first.")?;
+        let credentials = tokio::task::spawn_blocking(move || load_credentials(&server))
+            .await
             .map_err(|_| "Could not read credential storage.".to_string())??
             .ok_or("No saved credentials for this server. Please authorize first.")?;
-        crate::notes_api::check_request(client()?, &credentials.server, &credentials.login_name, &credentials.app_password)
+        crate::notes_api::check_request(
+            client()?,
+            &credentials.server,
+            &credentials.login_name,
+            &credentials.app_password,
+        )
     }
 
     async fn cancel(&self) {
@@ -135,13 +237,19 @@ impl LoginSession {
     }
 }
 
-async fn finish_login<F, Fut>(session: &mut Option<LoginSession>, store: F) -> Result<Option<String>, String>
+async fn finish_login<F, Fut>(
+    session: &mut Option<LoginSession>,
+    store: F,
+) -> Result<Option<String>, String>
 where
     F: FnOnce(Credentials) -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
 {
-    let credentials = session.as_ref().and_then(|s| s.received.as_ref())
-        .ok_or("Missing login result.")?.clone();
+    let credentials = session
+        .as_ref()
+        .and_then(|s| s.received.as_ref())
+        .ok_or("Missing login result.")?
+        .clone();
     let login_name = credentials.login_name.clone();
     store(credentials).await?;
     *session = None;
@@ -176,12 +284,18 @@ pub struct LoginStatus {
 }
 
 fn trusted_endpoint(base: &Url, input: &str) -> Result<Url, String> {
-    let url = Url::parse(input).map_err(|_| "Nextcloud returned an invalid login address.".to_string())?;
-    if url.scheme() != "https" || url.origin() != base.origin()
-        || !url.username().is_empty() || url.password().is_some()
+    let url = Url::parse(input)
+        .map_err(|_| "Nextcloud returned an invalid login address.".to_string())?;
+    if url.scheme() != "https"
+        || url.origin() != base.origin()
+        || !url.username().is_empty()
+        || url.password().is_some()
         || url.fragment().is_some()
     {
-        return Err("Login stopped: Nextcloud returned an address outside your configured HTTPS server.".into());
+        return Err(
+            "Login stopped: Nextcloud returned an address outside your configured HTTPS server."
+                .into(),
+        );
     }
     Ok(url)
 }
@@ -227,12 +341,19 @@ fn network_error(_: reqwest::Error) -> String {
 }
 
 fn check_status(status: StatusCode, polling: bool) -> Result<bool, String> {
-    if polling && status == StatusCode::NOT_FOUND { return Ok(false); }
-    if status == StatusCode::OK { return Ok(true); }
+    if polling && status == StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    if status == StatusCode::OK {
+        return Ok(true);
+    }
     if status.is_redirection() {
         return Err("Nextcloud redirected the request. Save its final HTTPS base address and start login again.".into());
     }
-    Err(format!("Nextcloud returned HTTP {}. Retry, or cancel and check your server address.", status.as_u16()))
+    Err(format!(
+        "Nextcloud returned HTTP {}. Retry, or cancel and check your server address.",
+        status.as_u16()
+    ))
 }
 
 async fn read_json<T: DeserializeOwned>(mut response: Response) -> Result<T, String> {
@@ -243,7 +364,8 @@ async fn read_json<T: DeserializeOwned>(mut response: Response) -> Result<T, Str
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Nextcloud returned an invalid login response.".into())
+    serde_json::from_slice(&bytes)
+        .map_err(|_| "Nextcloud returned an invalid login response.".into())
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -258,8 +380,12 @@ fn storage_help() -> &'static str {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn credential_entry(server: &str) -> Result<keyring::Entry, String> {
     // Preserve the existing macOS service/account identifiers exactly.
-    keyring::Entry::new("com.rustynotes.nextcloud", server)
-        .map_err(|_| format!("Could not access secure credential storage. {}", storage_help()))
+    keyring::Entry::new("com.rustynotes.nextcloud", server).map_err(|_| {
+        format!(
+            "Could not access secure credential storage. {}",
+            storage_help()
+        )
+    })
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -269,7 +395,8 @@ fn store_credentials(credentials: &Credentials) -> Result<(), String> {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn store_credentials_in(entry: &keyring::Entry, credentials: &Credentials) -> Result<(), String> {
-    let secret = serde_json::to_string(credentials).map_err(|_| "Could not prepare credentials.".to_string())?;
+    let secret = serde_json::to_string(credentials)
+        .map_err(|_| "Could not prepare credentials.".to_string())?;
     entry.set_password(&secret).map_err(|_| format!("Could not save credentials securely. {} Then choose Retry login check. Do not cancel or quit if you want to retry saving this authorization.", storage_help()))
 }
 
@@ -284,16 +411,23 @@ fn load_credentials(server: &str) -> Result<Option<Credentials>, String> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn load_credentials_from(entry: &keyring::Entry, server: &str) -> Result<Option<Credentials>, String> {
+fn load_credentials_from(
+    entry: &keyring::Entry,
+    server: &str,
+) -> Result<Option<Credentials>, String> {
     match entry.get_password() {
         Ok(secret) => {
-            let mut credentials: Credentials = serde_json::from_str(&secret)
-                .map_err(|_| "Stored credentials could not be read. Please authorize again.".to_string())?;
+            let mut credentials: Credentials = serde_json::from_str(&secret).map_err(|_| {
+                "Stored credentials could not be read. Please authorize again.".to_string()
+            })?;
             validate_credentials(server, &mut credentials)?;
             Ok(Some(credentials))
         }
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err(format!("Could not read secure credential storage. {} Then reopen Settings.", storage_help())),
+        Err(_) => Err(format!(
+            "Could not read secure credential storage. {} Then reopen Settings.",
+            storage_help()
+        )),
     }
 }
 
@@ -310,42 +444,75 @@ fn stored_login(server: &str) -> Result<Option<String>, String> {
 pub async fn get_login_status(state: tauri::State<'_, LoginState>) -> Result<LoginStatus, String> {
     let guard = state.0.lock().await;
     if guard.is_some() {
-        return Ok(LoginStatus { login_name: None, pending: true });
+        return Ok(LoginStatus {
+            login_name: None,
+            pending: true,
+        });
     }
     let login_name = if let Some(server) = crate::settings::get_server_url()? {
-        tokio::task::spawn_blocking(move || stored_login(&server)).await
+        tokio::task::spawn_blocking(move || stored_login(&server))
+            .await
             .map_err(|_| "Could not read credential storage.".to_string())??
-    } else { None };
-    Ok(LoginStatus { login_name, pending: false })
+    } else {
+        None
+    };
+    Ok(LoginStatus {
+        login_name,
+        pending: false,
+    })
 }
 
 #[tauri::command]
-pub async fn begin_login(app: tauri::AppHandle, state: tauri::State<'_, LoginState>) -> Result<(), String> {
+pub async fn begin_login(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LoginState>,
+) -> Result<(), String> {
     if !cfg!(any(target_os = "macos", target_os = "linux")) {
-        return Err("Secure login storage is currently implemented only for macOS and Linux.".into());
+        return Err(
+            "Secure login storage is currently implemented only for macOS and Linux.".into(),
+        );
     }
     let mut guard = state.0.lock().await;
-    if guard.is_some() { return Err("A login is already active. Cancel it before starting again.".into()); }
+    if guard.is_some() {
+        return Err("A login is already active. Cancel it before starting again.".into());
+    }
     let server = crate::settings::get_server_url()?.ok_or("Save your server address first.")?;
     let server = crate::settings::normalize_server_url(&server)?;
     let base = Url::parse(&server).map_err(|_| "Invalid server address.".to_string())?;
-    let endpoint = base.join("index.php/login/v2").map_err(|_| "Invalid login endpoint.".to_string())?;
+    let endpoint = base
+        .join("index.php/login/v2")
+        .map_err(|_| "Invalid login endpoint.".to_string())?;
     let client = client()?;
     let started = Instant::now();
-    let response = client.post(endpoint).header("Accept", "application/json").send().await.map_err(network_error)?;
+    let response = client
+        .post(endpoint)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(network_error)?;
     check_status(response.status(), false)?;
     let flow: Flow = read_json(response).await?;
     validate_flow(&base, &flow)?;
-    app.opener().open_url(flow.login, None::<&str>)
+    app.opener()
+        .open_url(flow.login, None::<&str>)
         .map_err(|_| "Could not open your browser. Please try again.".to_string())?;
-    *guard = Some(LoginSession { server, client, poll: flow.poll, started, last_poll: None, received: None });
+    *guard = Some(LoginSession {
+        server,
+        client,
+        poll: flow.poll,
+        started,
+        last_poll: None,
+        received: None,
+    });
     Ok(())
 }
 
 #[tauri::command]
 pub async fn poll_login(state: tauri::State<'_, LoginState>) -> Result<Option<String>, String> {
     let mut guard = state.0.lock().await;
-    let session = guard.as_mut().ok_or("No active login. Cancel and start again.")?;
+    let session = guard
+        .as_mut()
+        .ok_or("No active login. Cancel and start again.")?;
     if crate::settings::get_server_url()?.as_deref() != Some(&session.server) {
         return Err("Server address changed. Cancel and start login again.".into());
     }
@@ -353,23 +520,34 @@ pub async fn poll_login(state: tauri::State<'_, LoginState>) -> Result<Option<St
         if session.expired() {
             return Err("Login expired after 20 minutes. Cancel and start again.".into());
         }
-        if session.last_poll.is_some_and(|last| last.elapsed() < Duration::from_secs(1)) {
+        if session
+            .last_poll
+            .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
+        {
             return Ok(None);
         }
         session.last_poll = Some(Instant::now());
-        let response = session.client.post(&session.poll.endpoint)
+        let response = session
+            .client
+            .post(&session.poll.endpoint)
             .header("Accept", "application/json")
             .form(&[("token", session.poll.token.as_str())])
-            .send().await.map_err(network_error)?;
-        if !check_status(response.status(), true)? { return Ok(None); }
+            .send()
+            .await
+            .map_err(network_error)?;
+        if !check_status(response.status(), true)? {
+            return Ok(None);
+        }
         let mut credentials: Credentials = read_json(response).await?;
         validate_credentials(&session.server, &mut credentials)?;
         session.received = Some(credentials);
     }
     finish_login(&mut guard, |credentials| async move {
-        tokio::task::spawn_blocking(move || store_credentials(&credentials)).await
+        tokio::task::spawn_blocking(move || store_credentials(&credentials))
+            .await
             .map_err(|_| "Credential storage failed. Retry login check.".to_string())?
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -393,9 +571,13 @@ mod tests {
     fn secure_entry_round_trip_and_missing_entry() {
         let entry = mock_entry();
         let credentials = fake_session().received.unwrap();
-        assert!(load_credentials_from(&entry, &credentials.server).unwrap().is_none());
+        assert!(load_credentials_from(&entry, &credentials.server)
+            .unwrap()
+            .is_none());
         store_credentials_in(&entry, &credentials).unwrap();
-        let loaded = load_credentials_from(&entry, &credentials.server).unwrap().unwrap();
+        let loaded = load_credentials_from(&entry, &credentials.server)
+            .unwrap()
+            .unwrap();
         assert_eq!(loaded.server, credentials.server);
         assert_eq!(loaded.login_name, credentials.login_name);
         assert_eq!(loaded.app_password, credentials.app_password);
@@ -407,7 +589,9 @@ mod tests {
         let entry = mock_entry();
         let credentials = fake_session().received.unwrap();
         entry.set_password("malformed-secret-do-not-echo").unwrap();
-        let error = load_credentials_from(&entry, &credentials.server).err().unwrap();
+        let error = load_credentials_from(&entry, &credentials.server)
+            .err()
+            .unwrap();
         assert!(!error.contains("malformed-secret"));
         store_credentials_in(&entry, &credentials).unwrap();
         assert!(load_credentials_from(&entry, "https://other.example.com/").is_err());
@@ -419,26 +603,45 @@ mod tests {
         let entry = mock_entry();
         let credentials = fake_session().received.unwrap();
         let mock: &keyring::mock::MockCredential = entry.get_credential().downcast_ref().unwrap();
-        mock.set_error(keyring::Error::Invalid("private-provider-detail".into(), "fake-password".into()));
+        mock.set_error(keyring::Error::Invalid(
+            "private-provider-detail".into(),
+            "fake-password".into(),
+        ));
         let error = store_credentials_in(&entry, &credentials).unwrap_err();
         assert!(error.contains("Retry login check"));
         assert!(!error.contains("private-provider-detail") && !error.contains("fake-password"));
-        assert!(load_credentials_from(&entry, &credentials.server).unwrap().is_none());
+        assert!(load_credentials_from(&entry, &credentials.server)
+            .unwrap()
+            .is_none());
         store_credentials_in(&entry, &credentials).unwrap();
-        mock.set_error(keyring::Error::NoStorageAccess(Box::new(std::io::Error::other("private-provider-detail"))));
-        let error = load_credentials_from(&entry, &credentials.server).err().unwrap();
+        mock.set_error(keyring::Error::NoStorageAccess(Box::new(
+            std::io::Error::other("private-provider-detail"),
+        )));
+        let error = load_credentials_from(&entry, &credentials.server)
+            .err()
+            .unwrap();
         assert!(error.contains("reopen Settings"));
         assert!(!error.contains("private-provider-detail"));
-        assert!(load_credentials_from(&entry, &credentials.server).unwrap().is_some());
+        assert!(load_credentials_from(&entry, &credentials.server)
+            .unwrap()
+            .is_some());
     }
 
     fn fake_session() -> LoginSession {
         LoginSession {
             server: "https://cloud.example.com/".into(),
             client: client().unwrap(),
-            poll: Poll { token: "fake-token".into(), endpoint: "https://cloud.example.com/poll".into() },
-            started: Instant::now(), last_poll: None,
-            received: Some(Credentials { server: "https://cloud.example.com/".into(), login_name: "jim".into(), app_password: "fake-password".into() }),
+            poll: Poll {
+                token: "fake-token".into(),
+                endpoint: "https://cloud.example.com/poll".into(),
+            },
+            started: Instant::now(),
+            last_poll: None,
+            received: Some(Credentials {
+                server: "https://cloud.example.com/".into(),
+                login_name: "jim".into(),
+                app_password: "fake-password".into(),
+            }),
         }
     }
 
@@ -451,7 +654,9 @@ mod tests {
         let result = finish_login(&mut session, |credentials| async move {
             assert_eq!(credentials.app_password, "fake-password");
             Ok(())
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(result.as_deref(), Some("jim"));
         assert!(session.is_none());
     }
@@ -467,7 +672,10 @@ mod tests {
     async fn cannot_change_address_during_login() {
         let state = LoginState(Mutex::new(Some(fake_session())));
         // Rejection happens before any database access.
-        assert!(state.save_address("https://other.example.com/").await.is_err());
+        assert!(state
+            .save_address("https://other.example.com/")
+            .await
+            .is_err());
     }
 
     #[test]
@@ -481,9 +689,17 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_oversized_and_malformed_responses_without_echoing_body() {
-        let response = Response::from(http::Response::new(reqwest::Body::from(vec![b'x'; BODY_LIMIT + 1])));
-        assert_eq!(read_json::<Flow>(response).await.err().unwrap(), "Nextcloud's login response was too large.");
-        let response = Response::from(http::Response::new(reqwest::Body::from("fake-secret malformed json")));
+        let response = Response::from(http::Response::new(reqwest::Body::from(vec![
+            b'x';
+            BODY_LIMIT + 1
+        ])));
+        assert_eq!(
+            read_json::<Flow>(response).await.err().unwrap(),
+            "Nextcloud's login response was too large."
+        );
+        let response = Response::from(http::Response::new(reqwest::Body::from(
+            "fake-secret malformed json",
+        )));
         let error = read_json::<Flow>(response).await.err().unwrap();
         assert!(!error.contains("fake-secret"));
     }
@@ -491,8 +707,17 @@ mod tests {
     #[test]
     fn only_same_https_origin_is_allowed() {
         let base = Url::parse("https://cloud.example.com/nextcloud/").unwrap();
-        assert!(trusted_endpoint(&base, "https://cloud.example.com/nextcloud/login?state=abc").is_ok());
-        for address in ["https://evil.example.com/poll", "http://cloud.example.com/poll", "https://cloud.example.com:444/poll", "https://user:secret@cloud.example.com/poll", "https://cloud.example.com/poll#fragment", "/poll"] {
+        assert!(
+            trusted_endpoint(&base, "https://cloud.example.com/nextcloud/login?state=abc").is_ok()
+        );
+        for address in [
+            "https://evil.example.com/poll",
+            "http://cloud.example.com/poll",
+            "https://cloud.example.com:444/poll",
+            "https://user:secret@cloud.example.com/poll",
+            "https://cloud.example.com/poll#fragment",
+            "/poll",
+        ] {
             assert!(trusted_endpoint(&base, address).is_err());
         }
     }
@@ -500,7 +725,10 @@ mod tests {
     #[test]
     fn login_endpoint_preserves_subdirectory() {
         let base = Url::parse("https://cloud.example.com/nextcloud/").unwrap();
-        assert_eq!(base.join("index.php/login/v2").unwrap().as_str(), "https://cloud.example.com/nextcloud/index.php/login/v2");
+        assert_eq!(
+            base.join("index.php/login/v2").unwrap().as_str(),
+            "https://cloud.example.com/nextcloud/index.php/login/v2"
+        );
     }
 
     #[test]
@@ -508,7 +736,12 @@ mod tests {
         assert!(!check_status(StatusCode::NOT_FOUND, true).unwrap());
         assert!(check_status(StatusCode::NOT_FOUND, false).is_err());
         assert!(check_status(StatusCode::OK, true).unwrap());
-        for status in [StatusCode::FOUND, StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS, StatusCode::INTERNAL_SERVER_ERROR] {
+        for status in [
+            StatusCode::FOUND,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
             assert!(check_status(status, true).is_err());
         }
     }
@@ -516,7 +749,11 @@ mod tests {
     #[test]
     fn credentials_must_match_server_and_have_both_secrets() {
         let server = "https://cloud.example.com/nextcloud/";
-        let mut credentials = Credentials { server: server.trim_end_matches('/').into(), login_name: "jim".into(), app_password: "test-only".into() };
+        let mut credentials = Credentials {
+            server: server.trim_end_matches('/').into(),
+            login_name: "jim".into(),
+            app_password: "test-only".into(),
+        };
         assert!(validate_credentials(server, &mut credentials).is_ok());
         credentials.server = "https://evil.example.com/".into();
         assert!(validate_credentials(server, &mut credentials).is_err());
@@ -530,7 +767,13 @@ mod tests {
     #[test]
     fn validates_both_login_and_poll_destinations_before_opening_browser() {
         let base = Url::parse("https://cloud.example.com/").unwrap();
-        let mut flow = Flow { login: "https://cloud.example.com/login".into(), poll: Poll { endpoint: "https://evil.example.com/poll".into(), token: "test-only".into() } };
+        let mut flow = Flow {
+            login: "https://cloud.example.com/login".into(),
+            poll: Poll {
+                endpoint: "https://evil.example.com/poll".into(),
+                token: "test-only".into(),
+            },
+        };
         assert!(validate_flow(&base, &flow).is_err());
         flow.poll.endpoint = "https://cloud.example.com/poll".into();
         assert!(validate_flow(&base, &flow).is_ok());

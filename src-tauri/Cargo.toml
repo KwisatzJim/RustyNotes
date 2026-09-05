@@ -3,6 +3,7 @@ name = "rustynotes"
 version = "0.1.0"
 description = "Local-first Markdown notes with manual Nextcloud Notes synchronization"
 authors = ["Jim Kelley"]
+license = "MIT"
 homepage = "https://github.com/KwisatzJim/RustyNotes"
 repository = "https://github.com/KwisatzJim/RustyNotes"
 edition = "2021"

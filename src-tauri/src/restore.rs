@@ -220,7 +220,8 @@ mod tests {
             crate::backup::write_backup(from, to)?;
             saved_path = Some(to.to_path_buf());
             Err("simulated durability failure".into())
-        }).is_err());
+        })
+        .is_err());
         assert_eq!(title(&live), "current");
         assert_eq!(title(&saved_path.unwrap()), "current");
     }

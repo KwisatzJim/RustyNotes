@@ -28,8 +28,7 @@ pub fn open_database() -> Result<Connection> {
     let path = database_path();
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .expect("Could not create RustyNotes application directory");
+        fs::create_dir_all(parent).expect("Could not create RustyNotes application directory");
     }
 
     let connection = Connection::open(path)?;
@@ -128,11 +127,7 @@ pub fn get_notes() -> Result<Vec<Note>> {
     Ok(notes)
 }
 
-pub fn create_note(
-    title: &str,
-    content: &str,
-    category: &str,
-) -> Result<Note> {
+pub fn create_note(title: &str, content: &str, category: &str) -> Result<Note> {
     let connection = open_database()?;
 
     let modified_at = chrono::Utc::now().timestamp();
@@ -168,9 +163,20 @@ pub fn update_note(
 ) -> Result<Note> {
     let connection = open_database()?;
 
+    update_note_in(&connection, id, title, content, category, favorite)
+}
+
+fn update_note_in(
+    connection: &Connection,
+    id: i64,
+    title: &str,
+    content: &str,
+    category: &str,
+    favorite: bool,
+) -> Result<Note> {
     let modified_at = chrono::Utc::now().timestamp();
 
-    connection.execute(
+    let updated = connection.execute(
         r#"
         UPDATE notes
         SET
@@ -190,6 +196,9 @@ pub fn update_note(
             id,
         ),
     )?;
+    if updated != 1 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
 
     Ok(Note {
         id,
@@ -219,6 +228,49 @@ mod path_tests {
     }
 
     #[test]
+    fn updating_missing_note_returns_an_error() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_database(&connection).unwrap();
+        assert!(matches!(
+            update_note_in(&connection, 99, "missing", "text", "Personal", false),
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM notes", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn updating_existing_note_changes_exactly_that_row() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_database(&connection).unwrap();
+        connection.execute(
+            "INSERT INTO notes(id,title,content,category,favorite,modified_at) VALUES(1,'one','old','Personal',0,0),(2,'two','keep','Work',0,0)",
+            [],
+        ).unwrap();
+        let updated = update_note_in(&connection, 1, "one changed", "new", "Work", true).unwrap();
+        assert_eq!(
+            (
+                updated.id,
+                updated.title.as_str(),
+                updated.content.as_str(),
+                updated.favorite
+            ),
+            (1, "one changed", "new", true)
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT content FROM notes WHERE id=2", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "keep"
+        );
+    }
+
+    #[test]
     fn custom_data_directory_is_preserved_including_spaces() {
         assert_eq!(
             database_path_in(Path::new("/mnt/user data")),
@@ -229,9 +281,12 @@ mod path_tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn actual_macos_path_is_identical_to_original_location() {
-        let original = dirs::home_dir().unwrap()
-            .join("Library").join("Application Support")
-            .join("RustyNotes").join("rustynotes.db");
+        let original = dirs::home_dir()
+            .unwrap()
+            .join("Library")
+            .join("Application Support")
+            .join("RustyNotes")
+            .join("rustynotes.db");
         assert_eq!(database_path(), original);
     }
 
@@ -239,7 +294,8 @@ mod path_tests {
     #[test]
     fn linux_uses_absolute_xdg_override_or_home_fallback() {
         let base = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from).filter(|path| path.is_absolute())
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
             .unwrap_or_else(|| dirs::home_dir().unwrap().join(".local/share"));
         assert_eq!(database_path(), base.join("RustyNotes/rustynotes.db"));
     }

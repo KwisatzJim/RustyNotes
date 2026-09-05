@@ -24,7 +24,9 @@ pub struct RemoteNote {
 // become a reference and cause content to be skipped.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NoteReference { id: i64 }
+struct NoteReference {
+    id: i64,
+}
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -33,13 +35,25 @@ enum DownloadEntry {
     Reference(NoteReference),
 }
 
-fn import_request(client: Client, server: &str, username: &str, password: &str, cursor: Option<&str>) -> Result<RequestBuilder, String> {
+fn import_request(
+    client: Client,
+    server: &str,
+    username: &str,
+    password: &str,
+    cursor: Option<&str>,
+) -> Result<RequestBuilder, String> {
     let server = crate::settings::normalize_server_url(server)?;
-    let endpoint = Url::parse(&server).and_then(|base| base.join("index.php/apps/notes/api/v1/notes"))
+    let endpoint = Url::parse(&server)
+        .and_then(|base| base.join("index.php/apps/notes/api/v1/notes"))
         .map_err(|_| "Invalid Notes API address.".to_string())?;
-    let mut request = client.get(endpoint).basic_auth(username, Some(password))
-        .header("Accept", "application/json").query(&[("chunkSize", "100")]);
-    if let Some(cursor) = cursor { request = request.query(&[("chunkCursor", cursor)]); }
+    let mut request = client
+        .get(endpoint)
+        .basic_auth(username, Some(password))
+        .header("Accept", "application/json")
+        .query(&[("chunkSize", "100")]);
+    if let Some(cursor) = cursor {
+        request = request.query(&[("chunkCursor", cursor)]);
+    }
     Ok(request)
 }
 
@@ -56,15 +70,31 @@ where
     for page_index in 0..1000 {
         let mut response = fetch(cursor).await?;
         check_status(response.status())?;
-        let next = response.headers().get("X-Notes-Chunk-Cursor").map(|value| {
-            let cursor = value.to_str().map_err(|_| "Invalid Notes pagination cursor.".to_string())?;
-            if cursor.is_empty() || cursor.len() > 8192 { return Err("Invalid Notes pagination cursor.".to_string()); }
-            Ok(cursor.to_owned())
-        }).transpose()?;
+        let next = response
+            .headers()
+            .get("X-Notes-Chunk-Cursor")
+            .map(|value| {
+                let cursor = value
+                    .to_str()
+                    .map_err(|_| "Invalid Notes pagination cursor.".to_string())?;
+                if cursor.is_empty() || cursor.len() > 8192 {
+                    return Err("Invalid Notes pagination cursor.".to_string());
+                }
+                Ok(cursor.to_owned())
+            })
+            .transpose()?;
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| "Download interrupted. Nothing was imported.".to_string())? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| "Download interrupted. Nothing was imported.".to_string())?
+        {
             total_bytes += chunk.len();
-            if total_bytes > MAX_IMPORT_BYTES { return Err("Download exceeded the 64 MiB import limit. Nothing was imported.".into()); }
+            if total_bytes > MAX_IMPORT_BYTES {
+                return Err(
+                    "Download exceeded the 64 MiB import limit. Nothing was imported.".into(),
+                );
+            }
             bytes.extend_from_slice(&chunk);
         }
         let page: Vec<DownloadEntry> = serde_json::from_slice(&bytes)
@@ -90,7 +120,11 @@ where
         match next {
             None => return Ok(notes),
             Some(next) => {
-                if !cursors.insert(next.clone()) { return Err("Nextcloud repeated a pagination cursor. Nothing was imported.".into()); }
+                if !cursors.insert(next.clone()) {
+                    return Err(
+                        "Nextcloud repeated a pagination cursor. Nothing was imported.".into(),
+                    );
+                }
                 cursor = Some(next);
             }
         }
@@ -98,7 +132,12 @@ where
     Err("Download exceeded the pagination limit. Nothing was imported.".into())
 }
 
-pub(crate) async fn download_notes(client: Client, server: &str, username: &str, password: &str) -> Result<Vec<RemoteNote>, String> {
+pub(crate) async fn download_notes(
+    client: Client,
+    server: &str,
+    username: &str,
+    password: &str,
+) -> Result<Vec<RemoteNote>, String> {
     collect_pages(|cursor| {
         let request = import_request(client.clone(), server, username, password, cursor.as_deref());
         async move {
@@ -108,26 +147,39 @@ pub(crate) async fn download_notes(client: Client, server: &str, username: &str,
 }
 
 #[tauri::command]
-pub async fn refresh_server_notes(state: tauri::State<'_, crate::auth::LoginState>) -> Result<crate::refresh::RefreshSummary, String> {
+pub async fn refresh_server_notes(
+    state: tauri::State<'_, crate::auth::LoginState>,
+) -> Result<crate::refresh::RefreshSummary, String> {
     state.refresh_notes().await
 }
 
 #[tauri::command]
-pub async fn import_server_notes(state: tauri::State<'_, crate::auth::LoginState>) -> Result<crate::import::ImportSummary, String> {
+pub async fn import_server_notes(
+    state: tauri::State<'_, crate::auth::LoginState>,
+) -> Result<crate::import::ImportSummary, String> {
     state.import_notes().await
 }
 
-pub(crate) fn check_request(client: Client, server: &str, username: &str, password: &str) -> Result<RequestBuilder, String> {
+pub(crate) fn check_request(
+    client: Client,
+    server: &str,
+    username: &str,
+    password: &str,
+) -> Result<RequestBuilder, String> {
     let server = crate::settings::normalize_server_url(server)?;
     let endpoint = Url::parse(&server)
         .and_then(|base| base.join("index.php/apps/notes/api/v1/notes"))
         .map_err(|_| "Invalid Notes API address.".to_string())?;
     // No chunkSize: request the entire ID list, not a partial page. Exclude
     // content and other metadata because this check needs only the count.
-    Ok(client.get(endpoint)
+    Ok(client
+        .get(endpoint)
         .basic_auth(username, Some(password))
         .header("Accept", "application/json")
-        .query(&[("exclude", "content,title,category,favorite,modified,etag,readonly")]))
+        .query(&[(
+            "exclude",
+            "content,title,category,favorite,modified,etag,readonly",
+        )]))
 }
 
 fn check_status(status: StatusCode) -> Result<(), String> {
@@ -142,14 +194,22 @@ fn check_status(status: StatusCode) -> Result<(), String> {
 }
 
 #[derive(Deserialize)]
-struct NoteId { id: u64 }
+struct NoteId {
+    id: u64,
+}
 
 fn count_notes(bytes: &[u8]) -> Result<usize, String> {
     let notes: Vec<NoteId> = serde_json::from_slice(bytes)
         .map_err(|_| "The server did not return a valid Notes API list.".to_string())?;
     let mut ids = HashSet::with_capacity(notes.len());
-    if notes.iter().any(|note| note.id == 0 || !ids.insert(note.id)) {
-        return Err("The Notes API returned invalid or duplicate note IDs; the count cannot be trusted.".into());
+    if notes
+        .iter()
+        .any(|note| note.id == 0 || !ids.insert(note.id))
+    {
+        return Err(
+            "The Notes API returned invalid or duplicate note IDs; the count cannot be trusted."
+                .into(),
+        );
     }
     Ok(notes.len())
 }
@@ -157,10 +217,16 @@ fn count_notes(bytes: &[u8]) -> Result<usize, String> {
 async fn response_count(mut response: Response) -> Result<usize, String> {
     check_status(response.status())?;
     if response.headers().contains_key("X-Notes-Chunk-Cursor") {
-        return Err("The server returned only part of the Notes list. No total count is reported.".into());
+        return Err(
+            "The server returned only part of the Notes list. No total count is reported.".into(),
+        );
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| "The Notes API response was interrupted. Please try again.".to_string())? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "The Notes API response was interrupted. Please try again.".to_string())?
+    {
         if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
             return Err("The Notes list exceeded the connection check's size limit. No total count is reported.".into());
         }
@@ -170,7 +236,9 @@ async fn response_count(mut response: Response) -> Result<usize, String> {
 }
 
 #[tauri::command]
-pub async fn check_notes_connection(state: tauri::State<'_, crate::auth::LoginState>) -> Result<usize, String> {
+pub async fn check_notes_connection(
+    state: tauri::State<'_, crate::auth::LoginState>,
+) -> Result<usize, String> {
     let request = state.prepare_notes_check().await?;
     let response = request.send().await
         .map_err(|_| "Could not reach the Notes API securely. Check your connection and HTTPS certificate, then retry.".to_string())?;
@@ -184,7 +252,9 @@ mod tests {
     fn page(id: i64, cursor: Option<&str>) -> Response {
         let body = serde_json::json!([{"id":id,"title":"Test","content":"# text","category":"Work","favorite":true,"modified":100}]);
         let mut builder = http::Response::builder();
-        if let Some(cursor) = cursor { builder = builder.header("X-Notes-Chunk-Cursor", cursor); }
+        if let Some(cursor) = cursor {
+            builder = builder.header("X-Notes-Chunk-Cursor", cursor);
+        }
         Response::from(builder.body(reqwest::Body::from(body.to_string())).unwrap())
     }
 
@@ -202,19 +272,37 @@ mod tests {
             } else {
                 entries.extend((1..start).map(|id| serde_json::json!({"id":id})));
             }
-            responses.push_back(Response::from(builder.body(reqwest::Body::from(serde_json::to_vec(&entries).unwrap())).unwrap()));
+            responses.push_back(Response::from(
+                builder
+                    .body(reqwest::Body::from(serde_json::to_vec(&entries).unwrap()))
+                    .unwrap(),
+            ));
         }
-        let notes = collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap()))).await.unwrap();
+        let notes = collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap())))
+            .await
+            .unwrap();
         assert_eq!(notes.len(), 434);
-        assert_eq!(notes.iter().map(|note| note.id).collect::<HashSet<_>>().len(), 434);
-        assert!(notes.iter().all(|note| note.content == "preserved Markdown"));
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.id)
+                .collect::<HashSet<_>>()
+                .len(),
+            434
+        );
+        assert!(notes
+            .iter()
+            .all(|note| note.content == "preserved Markdown"));
     }
 
     #[tokio::test]
     async fn unknown_reference_cannot_silently_omit_note_content() {
         let response = Response::from(http::Response::new(reqwest::Body::from(r#"[{"id":999}]"#)));
         let mut response = Some(response);
-        let error = collect_pages(|_| std::future::ready(Ok(response.take().unwrap()))).await.err().unwrap();
+        let error = collect_pages(|_| std::future::ready(Ok(response.take().unwrap())))
+            .await
+            .err()
+            .unwrap();
         assert!(error.contains("content was not downloaded"));
     }
 
@@ -222,38 +310,59 @@ mod tests {
     async fn malformed_full_note_cannot_be_treated_as_reference() {
         let mut responses = std::collections::VecDeque::from([
             page(1, Some("next")),
-            Response::from(http::Response::new(reqwest::Body::from(r#"[{"id":1,"title":"private-title","content":null}]"#))),
+            Response::from(http::Response::new(reqwest::Body::from(
+                r#"[{"id":1,"title":"private-title","content":null}]"#,
+            ))),
         ]);
-        let error = collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap()))).await.err().unwrap();
+        let error = collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap())))
+            .await
+            .err()
+            .unwrap();
         assert!(error.contains("page 2"));
         assert!(!error.contains("private-title"));
     }
 
     #[tokio::test]
     async fn id_only_references_are_only_accepted_on_final_page() {
-        let middle = http::Response::builder().header("X-Notes-Chunk-Cursor", "third")
-            .body(reqwest::Body::from(r#"[{"id":1}]"#)).unwrap();
-        let mut responses = std::collections::VecDeque::from([page(1, Some("second")), Response::from(middle)]);
-        let error = collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap()))).await.err().unwrap();
+        let middle = http::Response::builder()
+            .header("X-Notes-Chunk-Cursor", "third")
+            .body(reqwest::Body::from(r#"[{"id":1}]"#))
+            .unwrap();
+        let mut responses =
+            std::collections::VecDeque::from([page(1, Some("second")), Response::from(middle)]);
+        let error = collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap())))
+            .await
+            .err()
+            .unwrap();
         assert!(error.contains("before the final page"));
     }
 
     #[tokio::test]
     async fn downloads_all_pages_before_returning_notes() {
-        let mut responses = std::collections::VecDeque::from([page(1, Some("cursor-two")), page(2, None)]);
+        let mut responses =
+            std::collections::VecDeque::from([page(1, Some("cursor-two")), page(2, None)]);
         let mut requested = Vec::new();
         let notes = collect_pages(|cursor| {
             requested.push(cursor);
             std::future::ready(Ok(responses.pop_front().unwrap()))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(notes.len(), 2);
         assert_eq!(requested, vec![None, Some("cursor-two".into())]);
     }
 
     #[tokio::test]
     async fn incomplete_download_returns_no_batch() {
-        let mut responses = std::collections::VecDeque::from([Ok(page(1, Some("next"))), Err("network interrupted".to_string())]);
-        assert!(collect_pages(|_| std::future::ready(responses.pop_front().unwrap())).await.is_err());
+        let mut responses = std::collections::VecDeque::from([
+            Ok(page(1, Some("next"))),
+            Err("network interrupted".to_string()),
+        ]);
+        assert!(
+            collect_pages(|_| std::future::ready(responses.pop_front().unwrap()))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -262,29 +371,58 @@ mod tests {
             std::collections::VecDeque::from([page(1, Some("same")), page(2, Some("same"))]),
             std::collections::VecDeque::from([page(1, Some("next")), page(1, None)]),
         ] {
-            assert!(collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap()))).await.is_err());
+            assert!(
+                collect_pages(|_| std::future::ready(Ok(responses.pop_front().unwrap())))
+                    .await
+                    .is_err()
+            );
         }
     }
 
     #[test]
     fn import_request_downloads_content_and_treats_cursor_as_data() {
-        let request = import_request(Client::new(), "https://cloud.example.com/sub/", "user", "password", Some("https://evil.example/?x=1&exclude=content"))
-            .unwrap().build().unwrap();
+        let request = import_request(
+            Client::new(),
+            "https://cloud.example.com/sub/",
+            "user",
+            "password",
+            Some("https://evil.example/?x=1&exclude=content"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
         assert_eq!(request.method(), reqwest::Method::GET);
         assert_eq!(request.url().host_str(), Some("cloud.example.com"));
-        assert_eq!(request.url().path(), "/sub/index.php/apps/notes/api/v1/notes");
+        assert_eq!(
+            request.url().path(),
+            "/sub/index.php/apps/notes/api/v1/notes"
+        );
         let params: std::collections::HashMap<_, _> = request.url().query_pairs().collect();
         assert!(!params.contains_key("exclude"));
         assert_eq!(params["chunkSize"], "100");
-        assert_eq!(params["chunkCursor"], "https://evil.example/?x=1&exclude=content");
+        assert_eq!(
+            params["chunkCursor"],
+            "https://evil.example/?x=1&exclude=content"
+        );
         assert!(request.body().is_none());
     }
 
     #[test]
     fn request_is_get_with_no_body_and_keeps_deployment_subdirectory() {
-        let request = check_request(Client::new(), "https://cloud.example.com/nextcloud/", "test-user", "test-password").unwrap().build().unwrap();
+        let request = check_request(
+            Client::new(),
+            "https://cloud.example.com/nextcloud/",
+            "test-user",
+            "test-password",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
         assert_eq!(request.method(), reqwest::Method::GET);
-        assert_eq!(request.url().path(), "/nextcloud/index.php/apps/notes/api/v1/notes");
+        assert_eq!(
+            request.url().path(),
+            "/nextcloud/index.php/apps/notes/api/v1/notes"
+        );
         assert_eq!(request.url().host_str(), Some("cloud.example.com"));
         assert!(request.body().is_none());
         assert!(request.headers()["authorization"].is_sensitive());
@@ -298,12 +436,24 @@ mod tests {
     #[test]
     fn counts_empty_and_populated_lists_without_exposing_note_fields() {
         assert_eq!(count_notes(b"[]").unwrap(), 0);
-        assert_eq!(count_notes(br#"[{"id":1},{"id":3,"content":"private text","title":"private title"}]"#).unwrap(), 2);
+        assert_eq!(
+            count_notes(br#"[{"id":1},{"id":3,"content":"private text","title":"private title"}]"#)
+                .unwrap(),
+            2
+        );
     }
 
     #[test]
     fn rejects_invalid_and_duplicate_ids() {
-        for data in [r#"[{"id":1},{"id":1}]"#, r#"[{"id":0}]"#, r#"[{"id":-1}]"#, r#"[{"id":"1"}]"#, "[{}]", "null", "{\"error\":\"private server details\"}"] {
+        for data in [
+            r#"[{"id":1},{"id":1}]"#,
+            r#"[{"id":0}]"#,
+            r#"[{"id":-1}]"#,
+            r#"[{"id":"1"}]"#,
+            "[{}]",
+            "null",
+            "{\"error\":\"private server details\"}",
+        ] {
             let error = count_notes(data.as_bytes()).unwrap_err();
             assert!(!error.contains("private server details"));
         }
@@ -312,24 +462,44 @@ mod tests {
     #[test]
     fn errors_distinguish_authorization_missing_app_and_redirects() {
         assert!(check_status(StatusCode::OK).is_ok());
-        assert!(check_status(StatusCode::UNAUTHORIZED).unwrap_err().contains("authorize"));
-        assert!(check_status(StatusCode::NOT_FOUND).unwrap_err().contains("enabled"));
-        assert!(check_status(StatusCode::FOUND).unwrap_err().contains("blocked"));
-        assert!(check_status(StatusCode::TOO_MANY_REQUESTS).unwrap_err().contains("wait"));
+        assert!(check_status(StatusCode::UNAUTHORIZED)
+            .unwrap_err()
+            .contains("authorize"));
+        assert!(check_status(StatusCode::NOT_FOUND)
+            .unwrap_err()
+            .contains("enabled"));
+        assert!(check_status(StatusCode::FOUND)
+            .unwrap_err()
+            .contains("blocked"));
+        assert!(check_status(StatusCode::TOO_MANY_REQUESTS)
+            .unwrap_err()
+            .contains("wait"));
     }
 
     #[tokio::test]
     async fn rejects_partial_lists_instead_of_reporting_incorrect_total() {
-        let response = http::Response::builder().header("X-Notes-Chunk-Cursor", "next-page")
-            .body(reqwest::Body::from("[{\"id\":1}]")).unwrap();
-        assert!(response_count(Response::from(response)).await.unwrap_err().contains("part"));
+        let response = http::Response::builder()
+            .header("X-Notes-Chunk-Cursor", "next-page")
+            .body(reqwest::Body::from("[{\"id\":1}]"))
+            .unwrap();
+        assert!(response_count(Response::from(response))
+            .await
+            .unwrap_err()
+            .contains("part"));
     }
 
     #[tokio::test]
     async fn handles_success_and_caps_response_size() {
         let response = Response::from(http::Response::new(reqwest::Body::from("[{\"id\":1}]")));
         assert_eq!(response_count(response).await.unwrap(), 1);
-        let response = Response::from(http::Response::new(reqwest::Body::from(vec![b' '; MAX_RESPONSE_BYTES + 1])));
-        assert!(response_count(response).await.unwrap_err().contains("size limit"));
+        let response = Response::from(http::Response::new(reqwest::Body::from(vec![
+            b' ';
+            MAX_RESPONSE_BYTES
+                + 1
+        ])));
+        assert!(response_count(response)
+            .await
+            .unwrap_err()
+            .contains("size limit"));
     }
 }

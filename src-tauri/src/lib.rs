@@ -1,23 +1,23 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
-mod commands;
-mod db;
-mod settings;
 mod auth;
-mod notes_api;
-mod import;
-mod refresh;
-mod resolution;
-mod upload;
-mod create_remote;
-mod export;
-mod markdown_import;
-mod recovery;
-mod sync_status;
-mod trash;
 mod backup;
 mod backup_preview;
+mod commands;
+mod create_remote;
+mod db;
+mod export;
+mod import;
+mod markdown_import;
+mod notes_api;
+mod recovery;
+mod refresh;
+mod resolution;
 mod restore;
+mod settings;
+mod sync_status;
+mod trash;
+mod upload;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

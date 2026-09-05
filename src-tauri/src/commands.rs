@@ -7,13 +7,8 @@ pub fn get_notes() -> Result<Vec<Note>, String> {
 }
 
 #[command]
-pub fn create_note(
-    title: String,
-    content: String,
-    category: String,
-) -> Result<Note, String> {
-    db::create_note(&title, &content, &category)
-        .map_err(|error| error.to_string())
+pub fn create_note(title: String, content: String, category: String) -> Result<Note, String> {
+    db::create_note(&title, &content, &category).map_err(|error| error.to_string())
 }
 
 #[command]
@@ -24,14 +19,7 @@ pub fn update_note(
     category: String,
     favorite: bool,
 ) -> Result<Note, String> {
-    db::update_note(
-        id,
-        &title,
-        &content,
-        &category,
-        favorite,
-    )
-    .map_err(|error| error.to_string())
+    db::update_note(id, &title, &content, &category, favorite).map_err(|error| error.to_string())
 }
 
 #[command]

@@ -133,6 +133,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 Automated checks do not replace real-server and desktop interaction tests.
 Use disposable notes for server-writing tests.
 
+GitHub Actions runs the frontend checks on Ubuntu and the Rust suite on both
+Ubuntu 24.04 and macOS after pushes and pull requests. CI uses only fixture data;
+it does not receive Nextcloud credentials or contact a notes server.
+
 ## Build desktop packages
 
 On Ubuntu, build a Debian package with:
@@ -185,7 +189,9 @@ In the same dialog, **Preview backup…** opens an existing `.sqlite3` backup
 and shows note and Trash counts. It inspects a private temporary copy, not the
 live database, and does not display note contents. Files with live SQLite
 companion files or an unsupported schema are rejected. Preview never changes your
-current data or Nextcloud server.
+current data or Nextcloud server. Preview also rejects more than 50,000 active or
+trashed notes, more than 100,000 rows in another app table, an individual text value
+over 8 MiB, or more than 96 MiB of text in total.
 
 To restore, preview the backup, read the replacement warning, check the confirmation
 box, and choose **Restore this backup**. Close other RustyNotes copies using the same
@@ -222,3 +228,8 @@ tools from other services; that is separate from the app's Notes API traffic.
 - `scripts/build-appimage.mjs`: Linux packaging and verification wrapper.
 - `tests/`: JavaScript tests; Rust tests live alongside the backend code.
 - [AUTH_TESTING.md](AUTH_TESTING.md): detailed manual sync and safety checks.
+
+## License
+
+RustyNotes is available under the [MIT License](LICENSE). Copyright © 2026
+Jim Kelley. Third-party components remain subject to their respective licenses.

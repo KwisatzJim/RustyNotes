@@ -9,6 +9,36 @@ use std::{
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_NOTE_ROWS: i64 = 50_000;
+const MAX_ROWS_PER_TABLE: i64 = 100_000;
+const MAX_TEXT_VALUE_BYTES: i64 = 8 * 1024 * 1024;
+const MAX_TOTAL_TEXT_BYTES: i64 = 96 * 1024 * 1024;
+
+const TEXT_COLUMNS: &[(&str, &[&str])] = &[
+    ("notes", &["title", "content", "category"]),
+    ("trashed_notes", &["title", "content", "category"]),
+    (
+        "refresh_conflicts",
+        &[
+            "base_snapshot",
+            "local_snapshot",
+            "server_snapshot",
+            "local_key",
+            "server_key",
+        ],
+    ),
+    ("conflict_resolutions", &["action"]),
+    (
+        "imported_notes",
+        &["server", "account", "original_snapshot"],
+    ),
+    (
+        "note_creation_attempts",
+        &["server", "account", "local_snapshot", "server_snapshot"],
+    ),
+    ("creation_recoveries", &["review_snapshot"]),
+    ("settings", &["key", "value"]),
+];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BackupPreview {
@@ -90,6 +120,7 @@ pub(crate) fn prepare(path: &Path) -> Result<PreparedBackup, String> {
         "This is damaged or is not a compatible RustyNotes backup. Nothing was restored."
             .to_string()
     })?;
+    validate_restore_limits(&db)?;
     let notes = db
         .query_row("SELECT count(*) FROM notes", [], |r| r.get(0))
         .map_err(|_| "Could not count backed-up notes.")?;
@@ -165,6 +196,73 @@ pub(crate) fn validate(db: &Connection) -> rusqlite::Result<()> {
     let check: String = db.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
     if check != "ok" {
         return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
+fn validate_restore_limits(db: &Connection) -> Result<(), String> {
+    validate_restore_limits_with(
+        db,
+        MAX_NOTE_ROWS,
+        MAX_ROWS_PER_TABLE,
+        MAX_TEXT_VALUE_BYTES,
+        MAX_TOTAL_TEXT_BYTES,
+    )
+}
+
+fn validate_restore_limits_with(
+    db: &Connection,
+    max_note_rows: i64,
+    max_rows_per_table: i64,
+    max_text_value_bytes: i64,
+    max_total_text_bytes: i64,
+) -> Result<(), String> {
+    let mut total = 0_i64;
+    for (table, fields) in TEXT_COLUMNS {
+        let present: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .map_err(|_| "Could not check backup size limits.")?;
+        if !present {
+            continue;
+        }
+        let rows: i64 = db
+            .query_row(&format!("SELECT count(*) FROM \"{table}\""), [], |row| {
+                row.get(0)
+            })
+            .map_err(|_| "Could not check backup row limits.")?;
+        let row_limit = if *table == "notes" || *table == "trashed_notes" {
+            max_note_rows
+        } else {
+            max_rows_per_table
+        };
+        if rows > row_limit {
+            return Err("This backup contains too many records to restore safely.".into());
+        }
+        for field in *fields {
+            let (largest, subtotal): (i64, i64) = db
+                .query_row(
+                    &format!("SELECT coalesce(max(length(\"{field}\")),0), coalesce(sum(length(\"{field}\")),0) FROM \"{table}\""),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|_| "Could not check backup text limits.")?;
+            if largest > max_text_value_bytes {
+                return Err("This backup contains an individual text value larger than the 8 MiB safety limit.".into());
+            }
+            total = total
+                .checked_add(subtotal)
+                .ok_or("This backup's text size is too large to restore safely.")?;
+            if total > max_total_text_bytes {
+                return Err(
+                    "This backup contains more than 96 MiB of text and cannot be restored safely."
+                        .into(),
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -283,6 +381,41 @@ mod tests {
         let huge = dir.path().join("huge.sqlite3");
         File::create(&huge).unwrap().set_len(MAX_BYTES + 1).unwrap();
         assert!(inspect(&huge).unwrap_err().contains("128 MiB"));
+    }
+    #[test]
+    fn rejects_oversized_text_values_before_restore() {
+        let (_dir, path) = fixture();
+        let db = Connection::open(&path).unwrap();
+        db.execute(
+            "UPDATE notes SET content=?1",
+            ["x".repeat(MAX_TEXT_VALUE_BYTES as usize + 1)],
+        )
+        .unwrap();
+        drop(db);
+        assert!(inspect(&path).unwrap_err().contains("8 MiB"));
+    }
+
+    #[test]
+    fn rejects_excessive_note_rows_before_restore() {
+        let (_dir, path) = fixture();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(&format!(
+            "WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<{}) INSERT INTO notes(id,title,content,category,favorite,modified_at) SELECT x,'','','',0,0 FROM n;",
+            MAX_NOTE_ROWS + 1
+        )).unwrap();
+        drop(db);
+        assert!(inspect(&path).unwrap_err().contains("too many records"));
+    }
+
+    #[test]
+    fn rejects_excessive_aggregate_text_even_when_each_value_is_small() {
+        let (_dir, path) = fixture();
+        let db = Connection::open(&path).unwrap();
+        db.execute("UPDATE notes SET title='123456', content='abcdef'", [])
+            .unwrap();
+        assert!(validate_restore_limits_with(&db, 10, 10, 8, 10)
+            .unwrap_err()
+            .contains("96 MiB"));
     }
     #[cfg(unix)]
     #[test]
