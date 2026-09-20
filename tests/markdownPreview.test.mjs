@@ -12,6 +12,13 @@ test('preview renders headings emphasis lists quotes code and GFM tables', () =>
     assert.ok(html.includes(`<${tag}`), tag);
   }
 });
+test('RustyNotes underline syntax renders without enabling raw HTML', () => {
+  const html = render('Before ++underlined words++ after `++code++`\n\n<u>raw</u>');
+  assert.ok(html.includes('<u>underlined words</u>'));
+  assert.ok(html.includes('<code>++code++</code>'));
+  assert.doesNotMatch(html, /<u>raw<\/u>/);
+  assert.doesNotMatch(html, /rustynotes-underline|href=/);
+});
 test('preview task checkboxes are read-only', () => {
   const html = render('- [x] done\n- [ ] todo');
   assert.equal((html.match(/disabled=""/g) || []).length, 2);

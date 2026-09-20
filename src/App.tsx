@@ -15,7 +15,9 @@ import { ImportMarkdown } from "./ImportMarkdown";
 import { Recovery } from "./Recovery";
 import { NoteSyncStatus } from "./NoteSyncStatus";
 import { Trash } from "./Trash";
+import { About } from "./About";
 import type { ConflictSummary, RefreshSummary, ResolutionChoice } from "./syncTypes";
+import { insertMarkdownTable } from "./editorFormatting";
 
 interface Note {
   id: number;
@@ -27,6 +29,7 @@ interface Note {
 }
 
 function App() {
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   const [themeSaveFailed, setThemeSaveFailed] = useState(false);
@@ -124,6 +127,23 @@ function App() {
     loadNotes();
     void invoke<ConflictSummary[]>("list_refresh_conflicts").then(setConflicts).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.repeat) return;
+      if (document.querySelector("dialog[open]")) return;
+      const key = event.key.toLowerCase();
+      if (key === "f") {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>(".search-box input")?.focus();
+      } else if (key === "n" && !reloadRequired && !trashBusy) {
+        event.preventDefault();
+        void createNote();
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [reloadRequired, trashBusy]);
 
   async function loadNotes() {
     try {
@@ -350,6 +370,17 @@ function App() {
           cursorPosition,
         );
       }
+    });
+  }
+
+  function formatTable() {
+    const textarea = editorRef.current;
+    if (!textarea || !selectedNote) return;
+    const result = insertMarkdownTable(selectedNote.content, textarea.selectionStart, textarea.selectionEnd);
+    updateNoteField("content", result.content);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(result.selectionStart, result.selectionEnd);
     });
   }
 
@@ -816,7 +847,8 @@ function formatChecklist() {
           {themeSaveFailed && <span role="status" className="theme-save-warning">Theme changed, but could not be saved for next launch.</span>}
           <button
             className="icon-button"
-            title="Search"
+            title="Search (Ctrl/Cmd+F)"
+            aria-keyshortcuts="Control+F Meta+F"
             onClick={() =>
               document
                 .querySelector<HTMLInputElement>(".search-box input")
@@ -833,11 +865,15 @@ function formatChecklist() {
           <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setUploadTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Upload selected note…</button>
           <button onClick={() => setConflictsOpen(true)}>Saved conflicts{conflicts.length > 0 ? ` (${conflicts.length})` : ""}</button>
           <button disabled={reloadRequired} onClick={() => setRecoveryOpen(true)}>Recover uploads…</button>
+          <button className="icon-button" title="About RustyNotes" aria-label="About RustyNotes" onClick={() => setAboutOpen(true)}>
+            ⓘ
+          </button>
           <button className="icon-button" title="Settings" disabled={reloadRequired} onClick={() => setSettingsOpen(true)}>
             ⚙
           </button>
         </div>
       </header>
+      {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} onImported={refreshImportedNotes} onRefresh={refreshFromServer} />}
       {refreshOpen && <Refresh onClose={() => setRefreshOpen(false)} onRefresh={refreshFromServer} />}
       {exportTarget && <Export title={exportTarget.title} onClose={() => setExportTarget(null)} onExport={() => exportNote(exportTarget.id)} />}
@@ -854,6 +890,8 @@ function formatChecklist() {
         <aside className="sidebar">
           <button
             className="new-note-button"
+            title="New Note (Ctrl/Cmd+N)"
+            aria-keyshortcuts="Control+N Meta+N"
             onClick={createNote}
           >
             <span>＋</span>
@@ -1092,6 +1130,10 @@ function formatChecklist() {
                   <s>S</s>
                 </button>
 
+                <button title="Underline (++text++)" onClick={() => formatSelection("++")}>
+                  <u>U</u>
+                </button>
+
                 <span className="toolbar-divider" />
 
                 <button
@@ -1106,6 +1148,10 @@ function formatChecklist() {
                 <button 
                   title="Checklist"
                   onClick={formatChecklist}>☑</button>
+                <button
+                  title="Insert table"
+                  aria-label="Insert table"
+                  onClick={formatTable}>▦</button>
 
 
 

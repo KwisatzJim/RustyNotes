@@ -39,6 +39,8 @@ return to the original text. Switching modes does not alter the Markdown or
 upload it. New notes open in Edit mode.
 
 Preview supports tables, task lists, and strikethrough as well as basic Markdown.
+RustyNotes uses `++underlined text++` for underline because standard Markdown has
+no underline syntax. The editor's table button inserts a two-column GFM table.
 Raw HTML is disabled, links are inactive, and images appear as labeled
 placeholders: preview does not fetch external content. Task checkboxes are
 read-only. Notes over 100,000 characters remain editable but cannot be previewed.
@@ -92,6 +94,29 @@ or distribution. Windows is not currently supported by the credential-storage
 implementation, even though Windows icon assets are included.
 
 ## Build and run from source
+
+### Register an AppImage in the Linux Applications menu
+
+With Python 3 installed, run this from a downloaded or cloned RustyNotes source
+folder, as your normal user (no `sudo`):
+
+```bash
+python3 scripts/install-linux-launcher.py "$HOME/Applications/RustyNotes_0.1.0_amd64.AppImage"
+```
+
+Use the path to your own trusted RustyNotes AppImage. The script installs the
+project icon and a personal launcher, makes the AppImage executable for you,
+and includes `StartupWMClass=Rustynotes` for window matching. Existing personal
+launcher/icon files are backed up under
+`${XDG_DATA_HOME:-$HOME/.local/share}/RustyNotes/launcher-backups/` before replacement.
+It does not run or move the AppImage, change system launchers, or access notes.
+Keep the AppImage in that location; rerun the installer if its filename changes.
+
+Open RustyNotes from **Applications**. On **COSMIC**, if the dock still shows an
+old or generic icon, save your work, log out, and log back in to reload the dock's
+cached launcher settings. This was needed on Hopper after the launcher change.
+
+### Development setup
 
 Install Rust and Cargo through rustup, Node.js with npm, and the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).

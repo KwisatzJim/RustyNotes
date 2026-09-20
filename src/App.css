@@ -700,6 +700,14 @@ button {
 .backup-dialog input[type="checkbox"] { width: auto; margin-right: 6px; }
 .backup-dialog .settings-actions { flex-wrap: wrap; }
 .settings-dialog [role="alert"] { color: var(--danger); }
+.about-heading { display: flex; align-items: center; gap: 16px; }
+.about-heading img { border-radius: 14px; }
+.about-heading h2 { margin-bottom: 4px; }
+.about-heading p { margin: 0; }
+.build-info { margin: 20px 0; border-top: 1px solid var(--border); }
+.build-info div { display: grid; grid-template-columns: 92px 1fr; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.build-info dt { color: var(--secondary); }
+.build-info dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .settings-actions button { padding: 9px 14px; border-radius: 5px; cursor: pointer; }
 .settings-actions button[type="submit"] { background: var(--accent); color: var(--on-accent); }

@@ -1,6 +1,24 @@
 use crate::db::{self, Note};
 use tauri::command;
 
+#[derive(serde::Serialize)]
+pub struct BuildInfo {
+    version: &'static str,
+    operating_system: &'static str,
+    architecture: &'static str,
+    profile: &'static str,
+}
+
+#[command]
+pub fn get_build_info() -> BuildInfo {
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        operating_system: std::env::consts::OS,
+        architecture: std::env::consts::ARCH,
+        profile: if cfg!(debug_assertions) { "debug" } else { "release" },
+    }
+}
+
 #[command]
 pub fn get_notes() -> Result<Vec<Note>, String> {
     db::get_notes().map_err(|error| error.to_string())
