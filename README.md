@@ -8,7 +8,7 @@ built with Rust, Tauri, React, TypeScript, and SQLite.
 I got frustrated with existing apps that either didn't fit my use case or had
 features I didn't need or want. So I made my own.
 
-**Status: alpha (0.1.0).** Working features are being developed and tested in
+**Status: alpha (0.1.1).** Working features are being developed and tested in
 small steps. Keep backups of important notes. Synchronization is manual, not
 an automatic background service.
 
@@ -101,7 +101,7 @@ With Python 3 installed, run this from a downloaded or cloned RustyNotes source
 folder, as your normal user (no `sudo`):
 
 ```bash
-python3 scripts/install-linux-launcher.py "$HOME/Applications/RustyNotes_0.1.0_amd64.AppImage"
+python3 scripts/install-linux-launcher.py "$HOME/Applications/RustyNotes_0.1.1_amd64.AppImage"
 ```
 
 Use the path to your own trusted RustyNotes AppImage. The script installs the

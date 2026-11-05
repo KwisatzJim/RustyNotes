@@ -1,0 +1,69 @@
+name: Release packages
+
+on:
+  push:
+    tags:
+      - '0.*'
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Ubuntu build dependencies
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          patchelf libdbus-1-dev libxdo-dev libfuse2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+      - run: npm test
+      - name: Test Rust backend
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build and audit Linux AppImage
+        if: runner.os == 'Linux'
+        run: npm run build:appimage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+      - name: Build Apple Silicon DMG
+        if: runner.os == 'macOS'
+        run: npm run tauri build -- --target aarch64-apple-darwin --bundles dmg
+      - name: Verify macOS bundle signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict src-tauri/target/aarch64-apple-darwin/release/bundle/macos/RustyNotes.app
+      - name: Upload Linux package and audit
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/appimage-license-audit.txt
+      - name: Upload macOS package
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          if-no-files-found: error
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
