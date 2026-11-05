@@ -43,3 +43,18 @@ test('empty and oversized notes have safe non-destructive fallbacks', () => {
   assert.ok(render('  ').includes('This note is empty'));
   assert.ok(render('x'.repeat(MAX_PREVIEW_CHARACTERS + 1)).includes('too large to preview'));
 });
+
+test('underline spans bold italic links and code without changing code contents', () => {
+  assert.equal(render('++**bold**++'), '<p><u><strong>bold</strong></u></p>');
+  assert.equal(render('++hello *world*++'), '<p><u>hello <em>world</em></u></p>');
+  assert.ok(render('++[label](https://example.com)++').includes('<u><span'));
+  assert.equal(render('++`code`++'), '<p><u><code>code</code></u></p>');
+  assert.equal(render('`++code++`'), '<p><code>++code++</code></p>');
+  assert.equal(render('++one++ and ++**two**++'), '<p><u>one</u> and <u><strong>two</strong></u></p>');
+});
+
+test('unmatched and multiline underline markers remain literal', () => {
+  assert.equal(render('++unfinished'), '<p>++unfinished</p>');
+  assert.equal(render('++one\ntwo++'), '<p>++one\ntwo++</p>');
+  assert.ok(render('```\n++code++\n```').includes('<code>++code++\n</code>'));
+});

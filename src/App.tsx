@@ -1,7 +1,9 @@
+import { matchesNoteFilter, noteFilterLabel, type NoteFilter } from "./noteFilters";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { acknowledgeSave, createSaveQueue } from "./saveQueue";
+import { createSaveQueue } from "./saveQueue";
+import { useNoteSaving } from "./useNoteSaving";
 import { Settings } from "./Settings";
 import { Conflicts } from "./Conflicts";
 import { Upload } from "./Upload";
@@ -17,7 +19,7 @@ import { NoteSyncStatus } from "./NoteSyncStatus";
 import { Trash } from "./Trash";
 import { About } from "./About";
 import type { ConflictSummary, RefreshSummary, ResolutionChoice } from "./syncTypes";
-import { insertMarkdownTable } from "./editorFormatting";
+import { formatHeading, formatBulletedList, formatNumberedList, formatChecklist, applyPendingLink, type FormattingResult, insertMarkdownTable } from "./editorFormatting";
 
 interface Note {
   id: number;
@@ -52,20 +54,18 @@ function App() {
   const [trashError, setTrashError] = useState("");
   const [conflicts, setConflicts] = useState<ConflictSummary[]>([]);
   const [reloadRequired, setReloadRequired] = useState(false);
-  const failedSaves = useRef(new Set<number>());
   const enqueueSave = useMemo(() => createSaveQueue(), []);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [pendingSaves, setPendingSaves] = useState(0);
   const [notes, setNotes] = useState<Note[]>([]);
+  const { saveNote, failedSaves, saveError, pendingSaves } = useNoteSaving(setNotes, enqueueSave);
   const [selectedNoteId, setSelectedNoteId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [selectedCategory, updateSelectedCategory] = useState("All Notes");
+  const [selectedCategory, updateSelectedCategory] = useState<NoteFilter>({ kind: "all" });
   const [localChangesOnly, setLocalChangesOnly] = useState(false);
   const [changes, setChanges] = useState<LocalChange[]>([]);
   const [changesLoading, setChangesLoading] = useState(true);
   const [changesError, setChangesError] = useState(false);
   const [changesRetry, setChangesRetry] = useState(0);
-  function setSelectedCategory(category: string) {
+  function setSelectedCategory(category: NoteFilter) {
     setLocalChangesOnly(false);
     updateSelectedCategory(category);
   }
@@ -89,6 +89,7 @@ function App() {
     start: number;
     end: number;
     text: string;
+    content: string;
     url: string;
   } | null>(null);
 
@@ -167,7 +168,7 @@ function App() {
     });
     setSelectedNoteId((current) => current ?? storedNotes[0]?.id ?? null);
     setSearch("");
-    setSelectedCategory("All Notes");
+    setSelectedCategory({ kind: "all" });
   }
 
   async function refreshFromServer(): Promise<RefreshSummary> {
@@ -184,7 +185,7 @@ function App() {
         setNotes(storedNotes);
         setSelectedNoteId((current) => current ?? storedNotes[0]?.id ?? null);
         setSearch("");
-        setSelectedCategory("All Notes");
+        setSelectedCategory({ kind: "all" });
         setConflicts(await invoke<ConflictSummary[]>("list_refresh_conflicts"));
         return summary;
       } catch (error) {
@@ -248,7 +249,7 @@ function App() {
         setNotes(restored);
         setSelectedNoteId(restored[0]?.id ?? null);
         setConflicts(comparisons);
-        setSearch(""); setSelectedCategory("All Notes");
+        setSearch(""); setSelectedCategory({ kind: "all" });
       }
       let safety: string | null = null;
       try {
@@ -272,7 +273,7 @@ function App() {
         if (!note) return null;
         setNotes((current) => [note, ...current.filter((item) => item.id !== note.id)]);
         setSearch("");
-        setSelectedCategory("All Notes");
+        setSelectedCategory({ kind: "all" });
         setSelectedNoteId(note.id);
         return note.title;
       } catch (error) {
@@ -320,9 +321,7 @@ function App() {
         note.content.toLowerCase().includes(query);
 
       const matchesCategory = localChangesOnly ? changedIds.has(note.id) :
-        selectedCategory === "All Notes" ||
-        (selectedCategory === "Favorites" && note.favorite) ||
-        note.category === selectedCategory;
+        matchesNoteFilter(note, selectedCategory);
 
       return matchesSearch && matchesCategory;
     });
@@ -396,7 +395,7 @@ function App() {
 
     if (selectedText.length === 0) return;
 
-    setPendingLink({ noteId: selectedNote.id, start, end, text: selectedText, url: "" });
+    setPendingLink({ noteId: selectedNote.id, start, end, text: selectedText, content: selectedNote.content, url: "" });
   }
 
   function applyLink() {
@@ -409,18 +408,9 @@ function App() {
 
     if (!url) return;
 
-    const newText = `[${pendingLink.text}](${url})`;
-
-    const updatedContent =
-      selectedNote.content.slice(0, pendingLink.start) +
-      newText +
-      selectedNote.content.slice(pendingLink.end);
-
+    const updatedContent = applyPendingLink(selectedNote.content, pendingLink);
+    if (updatedContent === null) { setPendingLink(null); return; }
     updateNoteField("content", updatedContent);
-    saveNote({
-      ...selectedNote,
-      content: updatedContent,
-    });
 
     setPendingLink(null);
 
@@ -434,258 +424,17 @@ function App() {
     });
   }
 
-  function formatHeading() {
-    const textarea = editorRef.current;
-
-    if (!textarea || !selectedNote) return;
-
-    const content = selectedNote.content;
-    const cursorPosition = textarea.selectionStart;
-
-    const lineStart = content.lastIndexOf("\n", cursorPosition - 1) + 1;
-
-    let lineEnd = content.indexOf("\n", cursorPosition);
-
-      if (lineEnd === -1) {
-      lineEnd = content.length;
-      }
-
-    const line = content.slice(lineStart, lineEnd);
-
-    const headingMatch = line.match(/^(#{1,6})\s+/);
-
-    let newLine: string;
-
-      if (!headingMatch) {
-        newLine = `# ${line}`;
-      } else {
-    const currentLevel = headingMatch[1].length;
-
-      if (currentLevel < 6) {
-        newLine = `${"#".repeat(currentLevel + 1)}${line.slice(
-          headingMatch[1].length,
-        )}`;
-      } else {
-        newLine = line.replace(/^#{6}\s+/, "");
-      }
-    }
-
-  const updatedContent =
-    content.slice(0, lineStart) +
-    newLine +
-    content.slice(lineEnd);
-
-  updateNoteField("content", updatedContent);
-
-  requestAnimationFrame(() => {
-    textarea.focus();
-
-    const newCursorPosition =
-      cursorPosition + (newLine.length - line.length);
-
-    textarea.setSelectionRange(
-      newCursorPosition,
-      newCursorPosition,
-    );
-  });
-}
-
-function formatBulletedList() {
-  const textarea = editorRef.current;
-
-  if (!textarea || !selectedNote) return;
-
-  const content = selectedNote.content;
-  const selectionStart = textarea.selectionStart;
-  const selectionEnd = textarea.selectionEnd;
-
-  const blockStart =
-    content.lastIndexOf("\n", selectionStart - 1) + 1;
-
-  let blockEnd = content.indexOf("\n", selectionEnd);
-
-  if (blockEnd === -1) {
-    blockEnd = content.length;
+  function applyFormatting(transform: (content: string, start: number, end: number) => FormattingResult | null) {
+    const editor = editorRef.current;
+    if (!editor || !selectedNote) return;
+    const result = transform(selectedNote.content, editor.selectionStart, editor.selectionEnd);
+    if (!result) return;
+    updateNoteField("content", result.content);
+    requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(result.selectionStart, result.selectionEnd);
+    });
   }
-
-  const block = content.slice(blockStart, blockEnd);
-  const lines = block.split("\n");
-
-  const nonEmptyLines = lines.filter(
-    (line) => line.trim() !== "",
-  );
-
-  if (nonEmptyLines.length === 0) return;
-
-  const allBulleted = nonEmptyLines.every((line) =>
-    /^\s*-\s+/.test(line),
-  );
-
-  const newLines = lines.map((line) => {
-    if (line.trim() === "") return line;
-
-    if (allBulleted) {
-      return line.replace(/^(\s*)-\s+/, "$1");
-    }
-
-    return `- ${line}`;
-  });
-
-  const newBlock = newLines.join("\n");
-
-  const updatedContent =
-    content.slice(0, blockStart) +
-    newBlock +
-    content.slice(blockEnd);
-
-  updateNoteField("content", updatedContent);
-
-  requestAnimationFrame(() => {
-    textarea.focus();
-
-    const lengthDifference =
-      newBlock.length - block.length;
-
-    textarea.setSelectionRange(
-      Math.max(0, selectionStart + lengthDifference),
-      Math.max(0, selectionEnd + lengthDifference),
-    );
-  });
-}
-
-function formatNumberedList() {
-  const textarea = editorRef.current;
-
-  if (!textarea || !selectedNote) return;
-
-  const content = selectedNote.content;
-  const selectionStart = textarea.selectionStart;
-  const selectionEnd = textarea.selectionEnd;
-
-  const blockStart =
-    content.lastIndexOf("\n", selectionStart - 1) + 1;
-
-  let blockEnd = content.indexOf("\n", selectionEnd);
-
-  if (blockEnd === -1) {
-    blockEnd = content.length;
-  }
-
-  const block = content.slice(blockStart, blockEnd);
-  const lines = block.split("\n");
-
-  const nonEmptyLines = lines.filter(
-    (line) => line.trim() !== "",
-  );
-
-  if (nonEmptyLines.length === 0) return;
-
-  const allNumbered = nonEmptyLines.every((line) =>
-    /^\s*\d+\.\s+/.test(line),
-  );
-
-  let number = 1;
-
-  const newLines = lines.map((line) => {
-    if (line.trim() === "") return line;
-
-    if (allNumbered) {
-      return line.replace(/^(\s*)\d+\.\s+/, "$1");
-    }
-
-    const newLine = `${number}. ${line}`;
-    number++;
-
-    return newLine;
-  });
-
-  const newBlock = newLines.join("\n");
-
-  const updatedContent =
-    content.slice(0, blockStart) +
-    newBlock +
-    content.slice(blockEnd);
-
-  updateNoteField("content", updatedContent);
-
-  requestAnimationFrame(() => {
-    textarea.focus();
-
-    const lengthDifference =
-      newBlock.length - block.length;
-
-    textarea.setSelectionRange(
-      Math.max(0, selectionStart + lengthDifference),
-      Math.max(0, selectionEnd + lengthDifference),
-    );
-  });
-}
-
-function formatChecklist() {
-  const textarea = editorRef.current;
-
-  if (!textarea || !selectedNote) return;
-
-  const content = selectedNote.content;
-  const selectionStart = textarea.selectionStart;
-  const selectionEnd = textarea.selectionEnd;
-
-  const blockStart =
-    content.lastIndexOf("\n", selectionStart - 1) + 1;
-
-  let blockEnd = content.indexOf("\n", selectionEnd);
-
-  if (blockEnd === -1) {
-    blockEnd = content.length;
-  }
-
-  const block = content.slice(blockStart, blockEnd);
-  const lines = block.split("\n");
-
-  const nonEmptyLines = lines.filter(
-    (line) => line.trim() !== "",
-  );
-
-  if (nonEmptyLines.length === 0) return;
-
-  const checklistPattern =
-    /^\s*-\s+\[[ xX]\]\s+/;
-
-  const allChecklist = nonEmptyLines.every((line) =>
-    checklistPattern.test(line),
-  );
-
-  const newLines = lines.map((line) => {
-    if (line.trim() === "") return line;
-
-    if (allChecklist) {
-      return line.replace(
-        /^(\s*)-\s+\[[ xX]\]\s+/,
-        "$1",
-      );
-    }
-
-    return `- [ ] ${line}`;
-  });
-
-  const newBlock = newLines.join("\n");
-
-  const updatedContent =
-    content.slice(0, blockStart) +
-    newBlock +
-    content.slice(blockEnd);
-
-  updateNoteField("content", updatedContent);
-
-  requestAnimationFrame(() => {
-    textarea.focus();
-
-    textarea.setSelectionRange(
-      blockStart,
-      blockStart + newBlock.length,
-    );
-  });
-}
 
   function updateNoteField(
     field: "title" | "content" | "category",
@@ -693,6 +442,7 @@ function formatChecklist() {
   ) {
     if (!selectedNote) return;
 
+    if (field === "content") setPendingLink(null);
     void saveNote({ ...selectedNote, [field]: value });
 
     setNotes((currentNotes) =>
@@ -723,35 +473,6 @@ function formatChecklist() {
     });
   }
 
-  async function saveNote(note: Note) {
-    setPendingSaves((count) => count + 1);
-    try {
-      const updatedNote = await enqueueSave(() => invoke<Note>("update_note", {
-        id: note.id,
-        title: note.title,
-        content: note.content,
-        category: note.category,
-        favorite: note.favorite,
-      }));
-
-      setNotes((currentNotes) =>
-        currentNotes.map((currentNote) =>
-          currentNote.id === updatedNote.id
-            ? acknowledgeSave(currentNote, note, updatedNote)
-            : currentNote,
-        ),
-      );
-      failedSaves.current.delete(note.id);
-      if (failedSaves.current.size === 0) setSaveError(null);
-    } catch (error) {
-      console.error("Failed to save note:", error);
-      failedSaves.current.add(note.id);
-      setSaveError("Save failed. Your edits remain here; please retry before closing.");
-    } finally {
-      setPendingSaves((count) => count - 1);
-    }
-  }
-
   async function saveCurrentNote() {
     if (!selectedNote) return;
     await saveNote(selectedNote);
@@ -770,7 +491,7 @@ function formatChecklist() {
       setSelectedNoteId(newNote.id);
       setPreviewMode(false);
       focusEditor.current = true;
-      setSelectedCategory("All Notes");
+      setSelectedCategory({ kind: "all" });
     } catch (error) {
       console.error("Failed to create note:", error);
     }
@@ -813,7 +534,7 @@ function formatChecklist() {
       const restored = await invoke<Note>("restore_note", { id });
       setNotes((current) => [restored, ...current.filter((note) => note.id !== id)]);
       setSelectedNoteId(id);
-      setSelectedCategory("All Notes");
+      setSelectedCategory({ kind: "all" });
       setSearch("");
       setTrashError("");
     });
@@ -835,42 +556,50 @@ function formatChecklist() {
   return (
     <div className="app">
       <header className="topbar" inert={trashBusy}>
-        <div className="brand">
-          <div className="brand-mark">R</div>
-          <span>RustyNotes</span>
+        <div className="topbar-row">
+          <div className="brand">
+            <div className="brand-mark">R</div>
+            <span>RustyNotes</span>
+          </div>
+
+          <div className="topbar-actions" role="group" aria-label="Nextcloud synchronization">
+            <button disabled={reloadRequired || refreshOpen} title="Refresh from Nextcloud (download only)" onClick={() => setRefreshOpen(true)}>↻ Refresh</button>
+            <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setUploadTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Upload selected note…</button>
+            <button onClick={() => setConflictsOpen(true)}>Saved conflicts{conflicts.length > 0 ? ` (${conflicts.length})` : ""}</button>
+            <button disabled={reloadRequired} onClick={() => setRecoveryOpen(true)}>Recover uploads…</button>
+          </div>
         </div>
+        <div className="topbar-row topbar-row-secondary">
+          <div className="topbar-actions" role="group" aria-label="Import, export, and backup">
+            <button disabled={reloadRequired} onClick={() => setBackupOpen(true)}>Back up local data…</button>
+            <button disabled={reloadRequired} onClick={() => setImportMarkdownOpen(true)}>Import Markdown…</button>
+            <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setExportTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Export Markdown…</button>
+          </div>
+          <div className="topbar-actions" role="group" aria-label="Application controls">
+            <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${oppositeTheme(theme)} theme`} aria-label={`Switch to ${oppositeTheme(theme)} theme`}>
+              <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span> {theme === "dark" ? "Light" : "Dark"}
+            </button>
+            {themeSaveFailed && <span role="status" className="theme-save-warning">Theme changed, but could not be saved for next launch.</span>}
+            <button
+              className="icon-button"
+              title="Search (Ctrl/Cmd+F)"
+              aria-keyshortcuts="Control+F Meta+F"
+              onClick={() =>
+                document
+                  .querySelector<HTMLInputElement>(".search-box input")
+                  ?.focus()
+              }
+            >
+              ⌕
+            </button>
 
-        <div className="topbar-actions">
-          <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${oppositeTheme(theme)} theme`} aria-label={`Switch to ${oppositeTheme(theme)} theme`}>
-            <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span> {theme === "dark" ? "Light" : "Dark"}
-          </button>
-          {themeSaveFailed && <span role="status" className="theme-save-warning">Theme changed, but could not be saved for next launch.</span>}
-          <button
-            className="icon-button"
-            title="Search (Ctrl/Cmd+F)"
-            aria-keyshortcuts="Control+F Meta+F"
-            onClick={() =>
-              document
-                .querySelector<HTMLInputElement>(".search-box input")
-                ?.focus()
-            }
-          >
-            ⌕
-          </button>
-
-          <button disabled={reloadRequired || refreshOpen} title="Refresh from Nextcloud (download only)" onClick={() => setRefreshOpen(true)}>↻ Refresh</button>
-          <button disabled={reloadRequired} onClick={() => setBackupOpen(true)}>Back up local data…</button>
-          <button disabled={reloadRequired} onClick={() => setImportMarkdownOpen(true)}>Import Markdown…</button>
-          <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setExportTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Export Markdown…</button>
-          <button disabled={!selectedNote || reloadRequired} onClick={() => { if (selectedNote) setUploadTarget({ id: selectedNote.id, title: selectedNote.title }); }}>Upload selected note…</button>
-          <button onClick={() => setConflictsOpen(true)}>Saved conflicts{conflicts.length > 0 ? ` (${conflicts.length})` : ""}</button>
-          <button disabled={reloadRequired} onClick={() => setRecoveryOpen(true)}>Recover uploads…</button>
-          <button className="icon-button" title="About RustyNotes" aria-label="About RustyNotes" onClick={() => setAboutOpen(true)}>
-            ⓘ
-          </button>
-          <button className="icon-button" title="Settings" disabled={reloadRequired} onClick={() => setSettingsOpen(true)}>
-            ⚙
-          </button>
+            <button className="icon-button" title="About RustyNotes" aria-label="About RustyNotes" onClick={() => setAboutOpen(true)}>
+              ⓘ
+            </button>
+            <button className="icon-button" title="Settings" disabled={reloadRequired} onClick={() => setSettingsOpen(true)}>
+              ⚙
+            </button>
+          </div>
         </div>
       </header>
       {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
@@ -902,9 +631,9 @@ function formatChecklist() {
             <button className="nav-item" onClick={() => setTrashOpen(true)}>🗑 Local Trash</button>
             <button
               className={`nav-item ${
-                !localChangesOnly && selectedCategory === "All Notes" ? "active" : ""
+                !localChangesOnly && selectedCategory.kind === "all" ? "active" : ""
               }`}
-              onClick={() => setSelectedCategory("All Notes")}
+              onClick={() => setSelectedCategory({ kind: "all" })}
             >
               <span>▤</span>
               All Notes
@@ -913,9 +642,9 @@ function formatChecklist() {
 
             <button
               className={`nav-item ${
-                !localChangesOnly && selectedCategory === "Favorites" ? "active" : ""
+                !localChangesOnly && selectedCategory.kind === "favorites" ? "active" : ""
               }`}
-              onClick={() => setSelectedCategory("Favorites")}
+              onClick={() => setSelectedCategory({ kind: "favorites" })}
             >
               <span>★</span>
               Favorites
@@ -936,9 +665,9 @@ function formatChecklist() {
               <button
                 key={category}
                 className={`nav-item ${
-                  !localChangesOnly && selectedCategory === category ? "active" : ""
+                  !localChangesOnly && (selectedCategory.kind === "category" && selectedCategory.name === category) ? "active" : ""
                 }`}
-                onClick={() => setSelectedCategory(category)}
+                onClick={() => setSelectedCategory({ kind: "category", name: category })}
               >
                 <span className="category-dot" />
                 {category}
@@ -960,7 +689,7 @@ function formatChecklist() {
         <section className="note-list">
           <div className="note-list-header">
             <div>
-              <h1>{localChangesOnly ? "Local changes" : selectedCategory}</h1>
+              <h1>{localChangesOnly ? "Local changes" : noteFilterLabel(selectedCategory)}</h1>
               <span>{localChangesOnly && changesLoading ? "Checking local changes…" : `${filteredNotes.length} notes`}</span>
             </div>
           </div>
@@ -1138,16 +867,16 @@ function formatChecklist() {
 
                 <button
                   title="Heading"
-                  onClick={formatHeading}>H</button>
+                  onClick={() => applyFormatting(formatHeading)}>H</button>
                 <button 
                   title="Bulleted list"
-                  onClick={formatBulletedList}>☷</button>
+                  onClick={() => applyFormatting(formatBulletedList)}>☷</button>
                 <button 
                   title="Numbered list"
-                  onClick={formatNumberedList}>☰</button>
+                  onClick={() => applyFormatting(formatNumberedList)}>☰</button>
                 <button 
                   title="Checklist"
-                  onClick={formatChecklist}>☑</button>
+                  onClick={() => applyFormatting(formatChecklist)}>☑</button>
                 <button
                   title="Insert table"
                   aria-label="Insert table"

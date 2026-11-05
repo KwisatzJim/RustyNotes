@@ -10,23 +10,34 @@ type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[]; d
 export function remarkRustyNotesUnderline() {
   return (tree: MarkdownNode) => {
     function visit(node: MarkdownNode) {
-      if (!node.children) return;
-      const children: MarkdownNode[] = [];
+      if (!node.children || node.type === "code" || node.type === "inlineCode") return;
+      // Parse child formatting first, then pair delimiters across inline siblings.
+      // Bold, emphasis and links are separate nodes in the Markdown tree.
+      const tokens: MarkdownNode[] = [];
       for (const child of node.children) {
+        visit(child);
         if (child.type !== "text" || !child.value?.includes("++")) {
-          visit(child);
-          children.push(child);
+          tokens.push(child);
           continue;
         }
-        let cursor = 0;
-        for (const match of child.value.matchAll(/\+\+([^+\n](?:.*?[^+\n])?)\+\+/g)) {
-          const index = match.index;
-          if (index > cursor) children.push({ type: "text", value: child.value.slice(cursor, index) });
-          children.push({ type: "strong", data: { hName: "u" }, children: [{ type: "text", value: match[1] }] });
-          cursor = index + match[0].length;
+        for (const part of child.value.split(/(\+\+)/)) {
+          if (part) tokens.push({ type: part === "++" ? "underlineDelimiter" : "text", value: part });
         }
-        if (cursor === 0) children.push(child);
-        else if (cursor < child.value.length) children.push({ type: "text", value: child.value.slice(cursor) });
+      }
+      const children: MarkdownNode[] = [];
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        if (token.type !== "underlineDelimiter") { children.push(token); continue; }
+        let end = i + 1;
+        while (end < tokens.length && tokens[end].type !== "underlineDelimiter" &&
+          !(tokens[end].type === "text" && tokens[end].value?.includes("\n")) &&
+          tokens[end].type !== "break") end++;
+        if (end > i + 1 && tokens[end]?.type === "underlineDelimiter") {
+          children.push({ type: "strong", data: { hName: "u" }, children: tokens.slice(i + 1, end) });
+          i = end;
+        } else {
+          children.push({ type: "text", value: "++" });
+        }
       }
       node.children = children;
     }

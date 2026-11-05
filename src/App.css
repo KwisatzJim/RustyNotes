@@ -105,17 +105,27 @@ button {
 /* Top bar */
 
 .topbar {
-  min-height: 58px;
-  flex-wrap: wrap;
-  gap: 8px;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   padding: 0 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
+
+.topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+}
+
+.topbar-row-secondary {
+  min-height: 46px;
+  border-top: 1px solid var(--subtle);
+}
+
+.topbar-row .brand { flex-shrink: 0; }
+
 
 .brand {
   display: flex;
@@ -139,8 +149,27 @@ button {
 
 .topbar-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.topbar-actions > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.topbar-actions > button:not(.icon-button) {
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.topbar-actions > button:not(.icon-button):hover:not(:disabled) {
+  background: var(--hover);
 }
 
 .icon-button {
