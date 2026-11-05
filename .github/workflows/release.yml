@@ -1,6 +1,17 @@
 name: Release packages
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to package
+        required: true
+        default: '0.1.1'
+      platform:
+        description: Platform to rebuild
+        type: choice
+        required: true
+        options: [macos-14, ubuntu-24.04]
   push:
     tags:
       - '0.*'
@@ -15,11 +26,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.platform)) || fromJSON('["ubuntu-24.04","macos-14"]') }}
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -50,7 +63,13 @@ jobs:
         run: npm run tauri build -- --target aarch64-apple-darwin --bundles dmg
       - name: Verify macOS bundle signature
         if: runner.os == 'macOS'
-        run: codesign --verify --deep --strict src-tauri/target/aarch64-apple-darwin/release/bundle/macos/RustyNotes.app
+        shell: bash
+        run: |
+          mount_path="$(mktemp -d)"
+          trap 'hdiutil detach "$mount_path" || true; rmdir "$mount_path" || true' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_path" src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          codesign --verify --deep --strict "$mount_path/RustyNotes.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$mount_path/RustyNotes.app/Contents/Info.plist")" = "$(node -p 'require("./package.json").version')"
       - name: Upload Linux package and audit
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
