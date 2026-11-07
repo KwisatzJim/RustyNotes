@@ -46,6 +46,13 @@
   },
   "bundle": {
     "active": true,
+    "linux": {
+      "deb": {
+        "conflicts": ["rustynotes"],
+        "replaces": ["rustynotes"],
+        "provides": ["rustynotes"]
+      }
+    },
     "macOS": {
       "signingIdentity": "-"
     },

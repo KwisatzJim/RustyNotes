@@ -172,6 +172,17 @@ npm run tauri build -- --bundles deb
 
 Output: `src-tauri/target/release/bundle/deb/`.
 
+Install or update using APT so runtime dependencies are resolved:
+
+```bash
+sudo apt install ./src-tauri/target/release/bundle/deb/RustyNotes_0.1.1_amd64.deb
+```
+
+The Debian package is now named `rusty-notes`. Its package metadata replaces
+the earlier `rustynotes` package automatically. If an older 0.1.1 build reports
+that `/usr/bin/rustynotes` belongs to `rustynotes`, rebuild from the current
+source and install the rebuilt package using the command above.
+
 For the AppImage, **build on Ubuntu using the project wrapper**:
 
 ```bash
