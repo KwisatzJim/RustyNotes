@@ -2,7 +2,6 @@
 use reqwest::{redirect::Policy, Client, Response, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -493,9 +492,7 @@ pub async fn begin_login(
     check_status(response.status(), false)?;
     let flow: Flow = read_json(response).await?;
     validate_flow(&base, &flow)?;
-    app.opener()
-        .open_url(flow.login, None::<&str>)
-        .map_err(|_| "Could not open your browser. Please try again.".to_string())?;
+    crate::browser::open(&app, flow.login).await?;
     *guard = Some(LoginSession {
         server,
         client,

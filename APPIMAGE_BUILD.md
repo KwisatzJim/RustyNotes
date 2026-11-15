@@ -40,6 +40,18 @@ review of non-library assets or other redistribution requirements.
 
 ## Wayland compatibility
 
+### Browser authorization on KDE 6
+
+AppImage login now runs the host `/usr/bin/xdg-open` and checks its exit status.
+Only that child process drops AppImage library/Qt plugin overrides and PATH
+entries inside APPDIR, so KDE's browser helpers use the host libraries. The
+desktop session and default browser settings remain available. Install
+`xdg-utils` and configure a default browser on the target system. Ordinary
+non-AppImage launches retain the Tauri opener. The user confirmed browser
+authorization with the rebuilt image on a CachyOS/KDE 6 laptop. Verification
+also passed 141 Rust tests, 51 JavaScript tests, and the final library notice
+audit (160 verified libraries, zero unresolved entries).
+
 This runs the normal Tauri AppImage build with
 `LINUXDEPLOY_EXCLUDED_LIBRARIES=libwayland-client.so*`, preserving any additional
 exclusions supplied by the caller. It then checks the generated AppDir for

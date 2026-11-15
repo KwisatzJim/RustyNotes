@@ -3,6 +3,7 @@
 mod auth;
 mod backup;
 mod backup_preview;
+mod browser;
 mod commands;
 mod create_remote;
 mod db;
