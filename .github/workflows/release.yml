@@ -6,12 +6,12 @@ on:
       release_tag:
         description: Existing release tag to package
         required: true
-        default: '0.1.1'
+        default: '0.1.3'
       platform:
         description: Platform to rebuild
         type: choice
         required: true
-        options: [macos-14, ubuntu-24.04]
+        options: [macos-15, ubuntu-24.04]
   push:
     tags:
       - '0.*'
@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.platform)) || fromJSON('["ubuntu-24.04","macos-14"]') }}
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.platform)) || fromJSON('["ubuntu-24.04","macos-15"]') }}
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
     steps:
